@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { SavedRecipe, PlannerItem, InventoryItem } from '../types';
 
@@ -9,21 +10,51 @@ const BatchPlanner: React.FC = () => {
   // Load saved recipes, persisted plan, and inventory
   useEffect(() => {
     const recipesStr = localStorage.getItem('sourdough_recipes');
+    let currentRecipes: SavedRecipe[] = [];
     if (recipesStr) {
       try {
-        setSavedRecipes(JSON.parse(recipesStr));
+        currentRecipes = JSON.parse(recipesStr);
+        setSavedRecipes(currentRecipes);
       } catch (e) {
         console.error('Failed to load recipes', e);
       }
     }
 
     const planStr = localStorage.getItem('sourdough_planner_items');
+    let currentPlan: PlannerItem[] = [];
     if (planStr) {
       try {
-        setPlannerItems(JSON.parse(planStr));
+        currentPlan = JSON.parse(planStr);
       } catch (e) {
         console.error('Failed to load plan', e);
       }
+    }
+
+    // SYNC LOGIC: Ensure Planner Items are valid against saved recipes
+    const validPlannerItems: PlannerItem[] = [];
+    let hasChanges = false;
+    const recipeMap = new Map(currentRecipes.map(r => [r.id, r]));
+
+    currentPlan.forEach(item => {
+        const freshRecipe = recipeMap.get(item.recipe.id);
+        if (!freshRecipe) {
+             // Recipe Deleted - remove from plan
+             hasChanges = true;
+             return;
+        }
+
+        if (freshRecipe.version !== item.recipe.version) {
+             // Recipe Updated/Reverted - update plan
+             validPlannerItems.push({ ...item, recipe: freshRecipe });
+             hasChanges = true;
+        } else {
+             validPlannerItems.push(item);
+        }
+    });
+
+    setPlannerItems(validPlannerItems);
+    if (hasChanges) {
+        localStorage.setItem('sourdough_planner_items', JSON.stringify(validPlannerItems));
     }
 
     const invStr = localStorage.getItem('sourdough_inventory');
@@ -38,7 +69,15 @@ const BatchPlanner: React.FC = () => {
 
   // Persist plan changes
   useEffect(() => {
-    localStorage.setItem('sourdough_planner_items', JSON.stringify(plannerItems));
+    if (plannerItems.length > 0) {
+         localStorage.setItem('sourdough_planner_items', JSON.stringify(plannerItems));
+    } else {
+        // Handle empty case carefully - if we just cleared it, we should save empty array
+        // But we need to distinguish between initial load and user clearing
+        // For simplicity in this app, saving empty array is fine if state is initialized
+        const existing = localStorage.getItem('sourdough_planner_items');
+        if (existing) localStorage.setItem('sourdough_planner_items', JSON.stringify([]));
+    }
   }, [plannerItems]);
 
   const addToPlan = (recipe: SavedRecipe) => {

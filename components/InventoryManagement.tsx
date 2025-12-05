@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { InventoryItem, PlannerItem, UnitOfMeasure } from '../types';
+import { InventoryItem, PlannerItem, UnitOfMeasure, SavedRecipe } from '../types';
 import { CalculatorIcon } from './icons/CalculatorIcon';
 
 const InventoryManagement: React.FC = () => {
@@ -16,7 +16,7 @@ const InventoryManagement: React.FC = () => {
   const [costPerPackage, setCostPerPackage] = useState('');
   const [itemsPerPackage, setItemsPerPackage] = useState('1');
 
-  // Load Data
+  // Load Data & Sync Planner
   useEffect(() => {
     const loadData = () => {
         const invStr = localStorage.getItem('sourdough_inventory');
@@ -28,17 +28,70 @@ const InventoryManagement: React.FC = () => {
             }
         }
 
+        // We need both recipes and planner items to sync them
+        const recipesStr = localStorage.getItem('sourdough_recipes');
         const planStr = localStorage.getItem('sourdough_planner_items');
-        if (planStr) {
+        
+        let currentRecipes: SavedRecipe[] = [];
+        let currentPlan: PlannerItem[] = [];
+
+        if (recipesStr) {
             try {
-                setPlannerItems(JSON.parse(planStr));
-            } catch (e) {
-                console.error("Error parsing plan", e);
+                currentRecipes = JSON.parse(recipesStr);
+            } catch (e) { console.error(e); }
+        }
+
+        if (planStr) {
+             try {
+                currentPlan = JSON.parse(planStr);
+            } catch (e) { console.error(e); }
+        }
+
+        // SYNC LOGIC:
+        // Filter out planner items where the recipe no longer exists in savedRecipes (Deleted)
+        // Update planner items if the recipe version in storage is different (Reverted/Updated)
+        const validPlannerItems: PlannerItem[] = [];
+        let hasChanges = false;
+        
+        // Create a map for faster lookup
+        const recipeMap = new Map(currentRecipes.map(r => [r.id, r]));
+
+        currentPlan.forEach(item => {
+            const freshRecipe = recipeMap.get(item.recipe.id);
+            
+            if (!freshRecipe) {
+                // Recipe was deleted from library, so we drop this planner item
+                // This reduces the 'Allocated' amount in inventory
+                hasChanges = true;
+                return; 
             }
+
+            if (freshRecipe.version !== item.recipe.version) {
+                // Recipe was updated or reverted in library.
+                // We must update the planner item to use the fresh ingredients/weights.
+                validPlannerItems.push({
+                    ...item,
+                    recipe: freshRecipe
+                });
+                hasChanges = true;
+            } else {
+                // No changes, keep existing item
+                validPlannerItems.push(item);
+            }
+        });
+
+        setPlannerItems(validPlannerItems);
+
+        // If we cleaned up the plan, persist it back to storage immediately
+        // so other tabs/components see the correct allocation.
+        if (hasChanges) {
+            localStorage.setItem('sourdough_planner_items', JSON.stringify(validPlannerItems));
         }
     };
 
     loadData();
+    
+    // Listen for storage events (e.g. recipe deleted in another tab)
     window.addEventListener('storage', loadData);
     return () => window.removeEventListener('storage', loadData);
   }, []);

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { parseRecipePdf } from '../services/geminiService';
 import { SavedRecipe, Ingredient } from '../types';
 import Spinner from './Spinner';
@@ -12,11 +12,36 @@ interface ExtractedData {
     ingredients: { name: string; weight: number }[];
 }
 
+interface PreviewIngredient {
+    name: string;
+    weight: number;
+    isFlour: boolean;
+}
+
+interface PreviewState {
+    name: string;
+    numberOfLoaves: number;
+    weightPerLoaf: number;
+    ingredients: PreviewIngredient[];
+}
+
+const FLOUR_KEYWORDS = [
+    'flour', 'wheat', 'rye', 'spelt', 'semolina', 'durum', 
+    'einkorn', 'emmer', 'kamut', 'strong', 'bread', 'all-purpose', 
+    'plain', 'wholemeal', 't55', 't65', 't45', 't80', 't110', 't150',
+    'manitoba', '00 flour'
+];
+
+// Keywords that suggest an ingredient is NOT base flour, even if it contains a flour keyword
+const EXCLUSION_KEYWORDS = [
+    'levain', 'starter', 'dusting', 'rice flour', 'discard', 'preferment'
+];
+
 const PDFImporter: React.FC = () => {
     const [file, setFile] = useState<File | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
-    const [previewData, setPreviewData] = useState<ExtractedData | null>(null);
+    const [previewData, setPreviewData] = useState<PreviewState | null>(null);
     const [successMessage, setSuccessMessage] = useState('');
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -33,6 +58,16 @@ const PDFImporter: React.FC = () => {
         }
     };
 
+    const isLikelyFlour = (name: string): boolean => {
+        const lowerName = name.toLowerCase();
+        // Must contain a flour keyword
+        const hasFlourKeyword = FLOUR_KEYWORDS.some(k => lowerName.includes(k));
+        // Must NOT contain an exclusion keyword
+        const isExcluded = EXCLUSION_KEYWORDS.some(k => lowerName.includes(k));
+        
+        return hasFlourKeyword && !isExcluded;
+    };
+
     const handleExtract = async () => {
         if (!file) return;
 
@@ -42,53 +77,79 @@ const PDFImporter: React.FC = () => {
 
         try {
             const jsonString = await parseRecipePdf(file);
-            const data: ExtractedData = JSON.parse(jsonString);
-            
-            // Validate basic structure
-            if (!data.ingredients || !Array.isArray(data.ingredients)) {
-                throw new Error("Could not identify ingredients in the PDF.");
+            let data: ExtractedData;
+
+            try {
+                data = JSON.parse(jsonString);
+            } catch (jsonErr) {
+                throw new Error("Could not interpret the document structure.");
             }
             
-            setPreviewData(data);
-        } catch (err) {
+            // Validate basic structure
+            if (!data || !data.ingredients || !Array.isArray(data.ingredients) || data.ingredients.length === 0) {
+                throw new Error("No identifiable ingredients found.");
+            }
+
+            // Check for valid weights (common failure point with complex PDFs or unscannable text)
+            const hasValidWeights = data.ingredients.some(i => i.weight && !isNaN(Number(i.weight)) && Number(i.weight) > 0);
+            if (!hasValidWeights) {
+                 throw new Error("Ingredients were found but weights could not be determined.");
+            }
+            
+            // Apply Heuristic to mark flours
+            const processedIngredients: PreviewIngredient[] = data.ingredients.map(ing => ({
+                name: ing.name,
+                weight: Number(ing.weight) || 0, // Fallback to 0 if NaN, though validated above
+                isFlour: isLikelyFlour(ing.name)
+            }));
+
+            // If no flours detected, default to largest ingredient or check all if simple list
+            const hasFlour = processedIngredients.some(i => i.isFlour);
+            if (!hasFlour && processedIngredients.length > 0) {
+                 // Fallback: Assume the heaviest ingredient is the flour base
+                 const maxWeight = Math.max(...processedIngredients.map(i => i.weight));
+                 const heaviest = processedIngredients.find(i => i.weight === maxWeight);
+                 if (heaviest) heaviest.isFlour = true;
+            }
+
+            setPreviewData({
+                name: data.name || "Imported Recipe",
+                numberOfLoaves: Number(data.numberOfLoaves) || 1,
+                weightPerLoaf: Number(data.weightPerLoaf) || 1000,
+                ingredients: processedIngredients
+            });
+        } catch (err: any) {
             console.error(err);
-            setError("Failed to extract recipe data. Please ensure the PDF is clear and readable.");
+            const specificMessage = err.message || "Failed to extract recipe data.";
+            setError(`${specificMessage} Tips: Ensure the ingredient list is clear, legible, and units (g, kg, oz, cups) are specified.`);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleInputChange = (field: keyof ExtractedData, value: string | number) => {
+    const handleInputChange = (field: keyof PreviewState, value: string | number) => {
         if (!previewData) return;
         setPreviewData({ ...previewData, [field]: value });
     };
 
-    const handleIngredientChange = (index: number, field: 'name' | 'weight', value: string | number) => {
+    const handleIngredientChange = (index: number, field: keyof PreviewIngredient, value: string | number | boolean) => {
         if (!previewData) return;
         const updatedIngs = [...previewData.ingredients];
         updatedIngs[index] = { ...updatedIngs[index], [field]: value };
         setPreviewData({ ...previewData, ingredients: updatedIngs });
     };
 
+    const totalFlourWeight = useMemo(() => {
+        if (!previewData) return 0;
+        return previewData.ingredients.reduce((sum, ing) => ing.isFlour ? sum + (Number(ing.weight) || 0) : sum, 0);
+    }, [previewData]);
+
     const calculatePercentagesAndSave = () => {
         if (!previewData) return;
 
-        // 1. Identify Total Flour Weight
-        // Heuristic: Sum of ingredients containing "flour" in the name.
-        // If no "flour" found, assume the largest ingredient is flour.
-        let totalFlourWeight = 0;
-        const flourIngredients = previewData.ingredients.filter(i => i.name.toLowerCase().includes('flour'));
-        
-        if (flourIngredients.length > 0) {
-            totalFlourWeight = flourIngredients.reduce((sum, i) => sum + Number(i.weight), 0);
-        } else {
-            // Fallback: Max weight ingredient
-            totalFlourWeight = Math.max(...previewData.ingredients.map(i => Number(i.weight)));
-        }
-
         if (totalFlourWeight <= 0) {
-            alert("Could not determine Total Flour weight. Percentages may be incorrect.");
-            totalFlourWeight = 1000; // Fallback to avoid division by zero
+            alert("Total Flour Weight is 0. Please select at least one ingredient in the 'Flour?' column to act as the 100% base.");
+            return;
         }
 
         // 2. Map to Ingredient Interface with calculated percentage
@@ -96,12 +157,12 @@ const PDFImporter: React.FC = () => {
             id: idx + 1,
             name: ing.name,
             percentage: parseFloat(((Number(ing.weight) / totalFlourWeight) * 100).toFixed(1)),
-            // costPerKg, inventoryId left undefined for now
         }));
 
         // 3. Construct SavedRecipe
-        // Attempt to identify Base Flour name for the snapshot
-        const baseFlourName = flourIngredients.length > 0 ? flourIngredients[0].name : "Bread Flour";
+        // Base Flour Name is the first marked flour, or generic
+        const firstFlour = previewData.ingredients.find(i => i.isFlour);
+        const baseFlourName = firstFlour ? firstFlour.name : "Bread Flour";
 
         const newRecipe: SavedRecipe = {
             id: Date.now().toString(),
@@ -165,16 +226,24 @@ const PDFImporter: React.FC = () => {
                         <span className="ml-2">Reading PDF...</span>
                     </div>
                 )}
-                {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
+                {error && <p className="mt-4 text-sm text-red-500 font-medium bg-red-50 p-2 rounded border border-red-100">{error}</p>}
                 {successMessage && <p className="mt-4 text-sm text-green-600 font-medium">{successMessage}</p>}
             </div>
 
             {/* Preview & Confirm Area */}
             {previewData && (
                 <div className="bg-white border border-stone-200 rounded-xl shadow-sm overflow-hidden animate-fade-in">
-                    <div className="bg-stone-50 px-6 py-4 border-b border-stone-200 flex justify-between items-center">
-                        <h3 className="font-bold text-stone-800">Recipe Preview</h3>
-                        <span className="text-xs text-stone-500 bg-white px-2 py-1 rounded border">Verify data before saving</span>
+                    <div className="bg-stone-50 px-6 py-4 border-b border-stone-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                        <div>
+                            <h3 className="font-bold text-stone-800">Recipe Preview</h3>
+                            <p className="text-xs text-stone-500">Verify ingredients and select which ones count as Flour Base.</p>
+                        </div>
+                        <div className="text-right">
+                             <div className="text-xs text-stone-500 uppercase tracking-wide">Total Flour Base</div>
+                             <div className={`font-bold text-lg ${totalFlourWeight === 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                                 {totalFlourWeight.toFixed(0)} g
+                             </div>
+                        </div>
                     </div>
                     
                     <div className="p-6 space-y-6">
@@ -214,19 +283,28 @@ const PDFImporter: React.FC = () => {
                                 <table className="min-w-full divide-y divide-stone-200">
                                     <thead className="bg-stone-50">
                                         <tr>
+                                            <th className="px-4 py-2 text-left text-xs font-medium text-stone-500 uppercase w-12 text-center">Flour?</th>
                                             <th className="px-4 py-2 text-left text-xs font-medium text-stone-500 uppercase">Ingredient</th>
                                             <th className="px-4 py-2 text-right text-xs font-medium text-stone-500 uppercase">Weight (g)</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-stone-200 bg-white">
                                         {previewData.ingredients.map((ing, idx) => (
-                                            <tr key={idx}>
+                                            <tr key={idx} className={ing.isFlour ? 'bg-amber-50' : ''}>
+                                                <td className="px-4 py-2 text-center">
+                                                    <input 
+                                                        type="checkbox"
+                                                        checked={ing.isFlour}
+                                                        onChange={(e) => handleIngredientChange(idx, 'isFlour', e.target.checked)}
+                                                        className="h-4 w-4 text-amber-600 focus:ring-amber-500 border-stone-300 rounded cursor-pointer"
+                                                    />
+                                                </td>
                                                 <td className="px-4 py-2">
                                                     <input 
                                                         type="text" 
                                                         value={ing.name}
                                                         onChange={(e) => handleIngredientChange(idx, 'name', e.target.value)}
-                                                        className="w-full text-sm border-0 border-b border-transparent focus:border-amber-500 focus:ring-0 p-0"
+                                                        className={`w-full text-sm border-0 border-b border-transparent focus:border-amber-500 focus:ring-0 p-0 bg-transparent ${ing.isFlour ? 'font-medium text-stone-900' : 'text-stone-600'}`}
                                                     />
                                                 </td>
                                                 <td className="px-4 py-2 text-right">
@@ -234,7 +312,7 @@ const PDFImporter: React.FC = () => {
                                                         type="number" 
                                                         value={ing.weight}
                                                         onChange={(e) => handleIngredientChange(idx, 'weight', parseFloat(e.target.value))}
-                                                        className="w-24 text-right text-sm border-0 border-b border-transparent focus:border-amber-500 focus:ring-0 p-0"
+                                                        className="w-24 text-right text-sm border-0 border-b border-transparent focus:border-amber-500 focus:ring-0 p-0 bg-transparent"
                                                     />
                                                 </td>
                                             </tr>
@@ -242,6 +320,11 @@ const PDFImporter: React.FC = () => {
                                     </tbody>
                                 </table>
                              </div>
+                             {totalFlourWeight === 0 && (
+                                 <p className="text-xs text-red-500 mt-2 font-medium">
+                                     * Warning: No flour selected. Baker's percentages cannot be calculated without a Flour Base.
+                                 </p>
+                             )}
                         </div>
 
                         <div className="flex justify-end pt-4">
@@ -253,7 +336,8 @@ const PDFImporter: React.FC = () => {
                             </button>
                             <button
                                 onClick={calculatePercentagesAndSave}
-                                className="px-6 py-2 bg-stone-800 text-white rounded-md text-sm font-medium hover:bg-stone-900 shadow-sm"
+                                disabled={totalFlourWeight <= 0}
+                                className="px-6 py-2 bg-stone-800 text-white rounded-md text-sm font-medium hover:bg-stone-900 shadow-sm disabled:bg-stone-400 disabled:cursor-not-allowed"
                             >
                                 Confirm & Save Recipe
                             </button>
