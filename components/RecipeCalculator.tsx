@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Ingredient, RecipeSnapshot, SavedRecipe, InventoryItem } from '../types';
 import RecipeCost from './RecipeCost';
@@ -28,7 +29,6 @@ const COMMON_INGREDIENTS = [
 ];
 
 type RoundingMode = 'exact' | '1g' | '5g';
-type ScalingMode = 'loaves' | 'weight';
 
 const initialIngredientsList: Ingredient[] = [
   { id: 1, name: 'Water', percentage: 75 },
@@ -47,10 +47,8 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   const [weightPerLoaf, setWeightPerLoaf] = useState<number>(900);
   const [totalFlour, setTotalFlour] = useState<number>(0);
   const [ingredients, setIngredients] = useState<Ingredient[]>(initialIngredientsList);
-  const [doughWeight, setDoughWeight] = useState<number>(0);
   
   // Scaling State
-  const [scalingMode, setScalingMode] = useState<ScalingMode>('loaves');
   const [scalePercentage, setScalePercentage] = useState<string>('100');
   const [roundingMode, setRoundingMode] = useState<RoundingMode>('exact');
   
@@ -103,7 +101,6 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
     const newTotalFlour = totalPercentage > 0 ? targetDoughWeight / totalPercentage : 0;
     
     setTotalFlour(newTotalFlour);
-    setDoughWeight(targetDoughWeight);
   }, [numberOfLoaves, weightPerLoaf, ingredients]);
 
   useEffect(() => {
@@ -202,17 +199,15 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   const handleWeightPerLoafChange = (value: string) => {
     const newWeight = parseFloat(value);
     setWeightPerLoaf(isNaN(newWeight) ? 0 : newWeight);
-    
-    if (scalingMode === 'weight' && !isNaN(newWeight) && newWeight > 0) {
-        const currentTotal = numberOfLoaves * weightPerLoaf;
-        setNumberOfLoaves(currentTotal / newWeight);
-    }
   };
   
-  const handleTotalWeightInput = (value: string) => {
+  const handleTotalWeightChange = (value: string) => {
       const targetTotal = parseFloat(value);
-      if (!isNaN(targetTotal) && weightPerLoaf > 0) {
+      if (!isNaN(targetTotal) && targetTotal >= 0 && weightPerLoaf > 0) {
+          // Adjust number of loaves to match target weight, keeping unit weight constant
           setNumberOfLoaves(targetTotal / weightPerLoaf);
+      } else if (value === '') {
+          setNumberOfLoaves(0);
       }
   };
 
@@ -393,6 +388,7 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   }
   
   const currentRecipeObject = savedRecipes.find(r => r.id === currentRecipeId);
+  const currentTotalWeight = (numberOfLoaves || 0) * (weightPerLoaf || 0);
 
   return (
     <div className="animate-fade-in pb-12">
@@ -481,53 +477,19 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
             </div>
         </div>
 
-        {/* Mode Toggles */}
-        <div className="flex space-x-1 bg-stone-100 p-1 rounded-lg mb-6 w-full md:w-auto inline-flex">
-            <button
-                onClick={() => setScalingMode('loaves')}
-                className={`flex-1 md:flex-none px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                    scalingMode === 'loaves' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'
-                }`}
-            >
-                By Loaf Count
-            </button>
-            <button
-                onClick={() => setScalingMode('weight')}
-                className={`flex-1 md:flex-none px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                    scalingMode === 'weight' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'
-                }`}
-            >
-                By Total Weight
-            </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
-            {scalingMode === 'loaves' ? (
-                <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Number of Loaves</label>
-                    <input
-                        type="number"
-                        step="0.5"
-                        value={numberOfLoaves}
-                        onChange={(e) => handleNumberOfLoavesChange(e.target.value)}
-                        className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
-                        placeholder="2"
-                    />
-                </div>
-            ) : (
-                <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Target Total Weight (g)</label>
-                    <input
-                        type="number"
-                        step="10"
-                        value={Math.round(doughWeight)} 
-                        onChange={(e) => handleTotalWeightInput(e.target.value)}
-                        className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
-                        placeholder="e.g. 5000"
-                    />
-                </div>
-            )}
-
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Number of Loaves</label>
+                <input
+                    type="number"
+                    step="0.5"
+                    value={numberOfLoaves}
+                    onChange={(e) => handleNumberOfLoavesChange(e.target.value)}
+                    className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
+                    placeholder="2"
+                />
+            </div>
+            
             <div>
                 <label className="block text-sm font-medium text-stone-700 mb-1">Weight per Loaf (g)</label>
                 <input
@@ -540,43 +502,40 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
                 />
             </div>
 
-            {/* Info Card */}
-            <div className="bg-amber-50 rounded-lg p-4 border border-amber-100 flex flex-col justify-center min-h-[72px]">
-                <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
-                        {scalingMode === 'loaves' ? 'Total Dough Weight' : 'Resulting Loaves'}
-                    </span>
-                </div>
-                <div className="text-2xl font-bold text-amber-900">
-                    {scalingMode === 'loaves' 
-                        ? `${doughWeight.toFixed(0)} g`
-                        : `${numberOfLoaves.toFixed(1)}`
-                    }
-                </div>
-                {scalingMode === 'weight' && (
-                    <div className="text-xs text-amber-700 mt-1">loaves @ {weightPerLoaf}g</div>
-                )}
+            <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Total Batch Weight (g)</label>
+                <input
+                    type="number"
+                    step="10"
+                    value={Math.round(currentTotalWeight)}
+                    onChange={(e) => handleTotalWeightChange(e.target.value)}
+                    className="block w-full px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg text-amber-900 font-semibold"
+                    placeholder="e.g. 5000"
+                />
             </div>
         </div>
         
-        {/* Percentage Scaler Utility */}
-        <div className="mt-6 pt-6 border-t border-stone-100 flex flex-wrap items-center gap-4">
-            <span className="text-sm font-medium text-stone-500">Quick Scale:</span>
-            <div className="flex items-center gap-2">
-                <input
-                    type="number"
-                    value={scalePercentage}
-                    onChange={(e) => setScalePercentage(e.target.value)}
-                    className="w-20 px-3 py-1.5 text-sm border border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500"
-                    placeholder="100"
-                />
-                <span className="text-sm text-stone-500">%</span>
-                <button 
-                    onClick={applyScaling}
-                    className="ml-2 px-3 py-1.5 bg-stone-100 text-stone-600 rounded-md text-sm font-medium hover:bg-stone-200"
-                >
-                    Apply %
-                </button>
+        {/* Quick Scale Utility */}
+        <div className="mt-6 pt-6 border-t border-stone-100">
+             <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-3">Quick Actions</h4>
+             <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex items-center gap-2">
+                    <span className="text-sm text-stone-600">Scale by:</span>
+                    <input
+                        type="number"
+                        value={scalePercentage}
+                        onChange={(e) => setScalePercentage(e.target.value)}
+                        className="w-20 px-3 py-1.5 text-sm border border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500"
+                        placeholder="100"
+                    />
+                    <span className="text-sm text-stone-500">%</span>
+                    <button 
+                        onClick={applyScaling}
+                        className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded-md text-sm font-medium hover:bg-stone-200 border border-stone-200"
+                    >
+                        Apply
+                    </button>
+                </div>
             </div>
         </div>
       </div>

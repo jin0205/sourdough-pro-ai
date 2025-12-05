@@ -143,3 +143,38 @@ export const getRecipeSuggestions = async (recipeContext: string, goal: string):
         return "Sorry, I couldn't generate suggestions at this time.";
     }
 };
+
+export const suggestIngredientCost = async (ingredientName: string): Promise<number | null> => {
+    try {
+        const prompt = `
+        Search for the current average bulk market price for "${ingredientName}" per kilogram (kg) in USD.
+        
+        Analyze the search results to find a realistic price for a bakery ingredient.
+        If the results show a range, calculate a conservative average.
+        
+        Return ONLY a single numeric value representing the price in USD/kg. 
+        Do not include symbols ($), text, or markdown. Just the number (e.g., 2.50).
+        If no price can be confidently determined, return 0.
+        `;
+
+        const response: GenerateContentResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                tools: [{googleSearch: {}}],
+            },
+        });
+        
+        const text = response.text || "";
+        // Clean up response to find the number
+        const match = text.match(/[\d.]+/);
+        if (match) {
+            const price = parseFloat(match[0]);
+            return isNaN(price) ? null : price;
+        }
+        return null;
+    } catch (error) {
+        console.error("Error suggesting cost:", error);
+        return null;
+    }
+};

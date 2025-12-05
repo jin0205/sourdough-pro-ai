@@ -7,6 +7,10 @@ const BatchPlanner: React.FC = () => {
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
+  // Scaling State
+  const [batchScalingMode, setBatchScalingMode] = useState<'percentage' | 'weight'>('percentage');
+  const [batchScaleValue, setBatchScaleValue] = useState<string>('');
+
   // Load saved recipes, persisted plan, and inventory
   useEffect(() => {
     const recipesStr = localStorage.getItem('sourdough_recipes');
@@ -72,9 +76,6 @@ const BatchPlanner: React.FC = () => {
     if (plannerItems.length > 0) {
          localStorage.setItem('sourdough_planner_items', JSON.stringify(plannerItems));
     } else {
-        // Handle empty case carefully - if we just cleared it, we should save empty array
-        // But we need to distinguish between initial load and user clearing
-        // For simplicity in this app, saving empty array is fine if state is initialized
         const existing = localStorage.getItem('sourdough_planner_items');
         if (existing) localStorage.setItem('sourdough_planner_items', JSON.stringify([]));
     }
@@ -160,6 +161,31 @@ const BatchPlanner: React.FC = () => {
     return { summary, totalDough, totalCost };
   }, [plannerItems, inventory]);
 
+  const applyBatchScaling = () => {
+      const val = parseFloat(batchScaleValue);
+      if (isNaN(val) || val <= 0) return;
+      if (plannerItems.length === 0) return;
+
+      let factor = 1;
+
+      if (batchScalingMode === 'percentage') {
+          factor = val / 100;
+      } else {
+          // Weight mode
+          const currentTotal = plannerSummary.totalDough;
+          if (currentTotal <= 0) return; // Prevent division by zero
+          factor = val / currentTotal;
+      }
+
+      const updatedItems = plannerItems.map(item => ({
+          ...item,
+          count: parseFloat((item.count * factor).toFixed(2))
+      }));
+
+      setPlannerItems(updatedItems);
+      setBatchScaleValue(''); // Reset input to indicate completion
+  };
+
   return (
     <div className="animate-fade-in">
       <div className="mb-6">
@@ -231,6 +257,54 @@ const BatchPlanner: React.FC = () => {
 
         {/* Right: Aggregation */}
         <div className="lg:col-span-2">
+          {/* Batch Operations Panel */}
+          {plannerItems.length > 0 && (
+              <div className="bg-white p-4 rounded-lg border border-stone-200 shadow-sm mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex-grow">
+                      <h3 className="text-sm font-bold text-stone-800 mb-1">Batch Operations</h3>
+                      <p className="text-xs text-stone-500">Scale all recipes in the plan at once.</p>
+                  </div>
+                  
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto items-end">
+                      <div className="flex rounded-md shadow-sm">
+                          <button
+                            onClick={() => setBatchScalingMode('percentage')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-l-md border ${batchScalingMode === 'percentage' ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300 hover:bg-stone-50'}`}
+                          >
+                            % Scale
+                          </button>
+                           <button
+                            onClick={() => setBatchScalingMode('weight')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-r-md border-t border-b border-r ${batchScalingMode === 'weight' ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-600 border-stone-300 hover:bg-stone-50'}`}
+                          >
+                            Target Weight
+                          </button>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <div className="relative rounded-md shadow-sm w-32">
+                            <input
+                                type="number"
+                                value={batchScaleValue}
+                                onChange={(e) => setBatchScaleValue(e.target.value)}
+                                className="block w-full px-3 py-1.5 border border-stone-300 rounded-md text-sm focus:ring-amber-500 focus:border-amber-500"
+                                placeholder={batchScalingMode === 'percentage' ? "e.g. 150" : "e.g. 50000"}
+                            />
+                            <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
+                                <span className="text-stone-400 text-xs">{batchScalingMode === 'percentage' ? '%' : 'g'}</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={applyBatchScaling}
+                            className="px-3 py-1.5 bg-amber-600 text-white text-xs font-medium rounded-md hover:bg-amber-700 whitespace-nowrap"
+                        >
+                            Apply Scale
+                        </button>
+                      </div>
+                  </div>
+              </div>
+          )}
+
           <div className="bg-white rounded-lg border border-stone-200 shadow-sm overflow-hidden">
             <div className="bg-stone-800 text-white px-6 py-4 flex justify-between items-center">
               <h3 className="font-bold">Master Production List</h3>
