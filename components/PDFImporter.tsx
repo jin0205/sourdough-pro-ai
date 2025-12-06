@@ -4,6 +4,7 @@ import { parseRecipePdf } from '../services/geminiService';
 import { SavedRecipe, Ingredient } from '../types';
 import Spinner from './Spinner';
 import { DocumentIcon } from './icons/DocumentIcon';
+import { storageService } from '../services/storageService';
 
 interface ExtractedData {
     name: string;
@@ -176,18 +177,15 @@ const PDFImporter: React.FC = () => {
             baseFlourName: baseFlourName
         };
 
-        // 4. Save to LocalStorage
+        // 4. Save to Storage Service
         try {
-            const existingStr = localStorage.getItem('sourdough_recipes');
-            const existing: SavedRecipe[] = existingStr ? JSON.parse(existingStr) : [];
-            const updated = [...existing, newRecipe];
-            localStorage.setItem('sourdough_recipes', JSON.stringify(updated));
+            storageService.addOrUpdateRecipe(newRecipe);
             setSuccessMessage("Recipe saved successfully! Check the Recipe Management tab.");
             setPreviewData(null);
             setFile(null);
         } catch (e) {
             console.error("Save failed", e);
-            setError("Failed to save recipe to local storage.");
+            setError("Failed to save recipe to storage.");
         }
     };
 

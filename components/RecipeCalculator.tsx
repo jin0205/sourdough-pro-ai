@@ -5,6 +5,8 @@ import RecipeCost from './RecipeCost';
 import { SparklesIcon } from './icons/SparklesIcon';
 import Spinner from './Spinner';
 import { getRecipeSuggestions } from '../services/geminiService';
+import { storageService } from '../services/storageService';
+import { calculateTotalFlour, calculateIngredientWeight } from '../utils/recipeMath';
 
 const COMMON_INGREDIENTS = [
   'Bread Flour',
@@ -96,10 +98,8 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   }, [initialRecipe]);
 
   const calculateRecipe = useCallback(() => {
-    const targetDoughWeight = (numberOfLoaves || 0) * (weightPerLoaf || 0);
-    const totalPercentage = 1 + ingredients.reduce((sum, ing) => sum + (ing.percentage || 0) / 100, 0);
-    const newTotalFlour = totalPercentage > 0 ? targetDoughWeight / totalPercentage : 0;
-    
+    // Replaced inline math with utility function
+    const newTotalFlour = calculateTotalFlour(numberOfLoaves, weightPerLoaf, ingredients);
     setTotalFlour(newTotalFlour);
   }, [numberOfLoaves, weightPerLoaf, ingredients]);
 
@@ -107,31 +107,15 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
     calculateRecipe();
   }, [calculateRecipe]);
 
-  // Load recipes and inventory from local storage on mount (for saving logic)
+  // Load recipes and inventory from storage on mount (for saving logic)
   useEffect(() => {
-    const saved = localStorage.getItem('sourdough_recipes');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const migrated = parsed.map((r: any) => ({
-            ...r,
-            version: r.version || 1,
-            history: r.history || []
-        }));
-        setSavedRecipes(migrated);
-      } catch (e) {
-        console.error('Failed to load recipes', e);
-      }
-    }
-
-    const invStr = localStorage.getItem('sourdough_inventory');
-    if (invStr) {
-        try {
-            setInventory(JSON.parse(invStr));
-        } catch (e) {
-            console.error('Failed to load inventory', e);
-        }
-    }
+    const loadData = () => {
+        setSavedRecipes(storageService.getRecipes());
+        setInventory(storageService.getInventory());
+    };
+    loadData();
+    window.addEventListener('storage', loadData);
+    return () => window.removeEventListener('storage', loadData);
   }, []);
 
   const findInventoryMatch = (name: string) => {
@@ -265,8 +249,13 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
       ${ingredients.map(i => `- ${i.name}: ${i.percentage}%`).join('\n')}
       `;
 
-      const result = await getRecipeSuggestions(context, aiGoal);
-      setAiSuggestion(result);
+      try {
+        const result = await getRecipeSuggestions(context, aiGoal);
+        setAiSuggestion(result);
+      } catch (e) {
+          console.error(e);
+          setAiSuggestion("Could not get suggestions.");
+      }
       setIsAiLoading(false);
   };
 
@@ -289,37 +278,36 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
       baseFlourCostPerKg: parseFloat(baseFlourCost) || 0
     };
 
-    let updatedRecipes: SavedRecipe[];
-
     if (currentRecipeId) {
-        updatedRecipes = savedRecipes.map(r => {
-            if (r.id === currentRecipeId) {
-                const historyItem: RecipeSnapshot = {
-                    numberOfLoaves: r.numberOfLoaves,
-                    weightPerLoaf: r.weightPerLoaf,
-                    ingredients: r.ingredients,
-                    date: r.date,
-                    version: r.version,
-                    baseFlourName: r.baseFlourName,
-                    baseFlourInventoryId: r.baseFlourInventoryId,
-                    baseFlourCostPerKg: r.baseFlourCostPerKg
-                };
+        // Update existing logic
+        const existingRecipe = savedRecipes.find(r => r.id === currentRecipeId);
+        if (existingRecipe) {
+            const historyItem: RecipeSnapshot = {
+                numberOfLoaves: existingRecipe.numberOfLoaves,
+                weightPerLoaf: existingRecipe.weightPerLoaf,
+                ingredients: existingRecipe.ingredients,
+                date: existingRecipe.date,
+                version: existingRecipe.version,
+                baseFlourName: existingRecipe.baseFlourName,
+                baseFlourInventoryId: existingRecipe.baseFlourInventoryId,
+                baseFlourCostPerKg: existingRecipe.baseFlourCostPerKg
+            };
 
-                const newVersion = r.version + 1;
-                setCurrentVersion(newVersion);
-                
-                return {
-                    ...r,
-                    ...currentData,
-                    name: recipeName,
-                    version: newVersion,
-                    history: [historyItem, ...r.history]
-                };
-            }
-            return r;
-        });
-        alert(`Recipe updated to Version ${currentVersion + 1}!`);
+            const updated: SavedRecipe = {
+                ...existingRecipe,
+                ...currentData,
+                name: recipeName,
+                version: existingRecipe.version + 1,
+                history: [historyItem, ...existingRecipe.history]
+            };
+
+            storageService.addOrUpdateRecipe(updated);
+            setSavedRecipes(storageService.getRecipes());
+            setCurrentVersion(updated.version);
+            alert(`Recipe updated to Version ${updated.version}!`);
+        }
     } else {
+        // New Recipe
         const newRecipe: SavedRecipe = {
           id: Date.now().toString(),
           name: recipeName,
@@ -327,14 +315,12 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
           version: 1,
           history: []
         };
-        updatedRecipes = [...savedRecipes, newRecipe];
+        storageService.addOrUpdateRecipe(newRecipe);
+        setSavedRecipes(storageService.getRecipes());
         setCurrentRecipeId(newRecipe.id);
         setCurrentVersion(1);
         alert('Recipe saved successfully!');
     }
-
-    setSavedRecipes(updatedRecipes);
-    localStorage.setItem('sourdough_recipes', JSON.stringify(updatedRecipes));
   };
 
   const handleSaveAsNew = () => {
@@ -359,9 +345,8 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
         baseFlourCostPerKg: parseFloat(baseFlourCost) || 0
     };
 
-    const updatedRecipes = [...savedRecipes, newRecipe];
-    setSavedRecipes(updatedRecipes);
-    localStorage.setItem('sourdough_recipes', JSON.stringify(updatedRecipes));
+    storageService.addOrUpdateRecipe(newRecipe);
+    setSavedRecipes(storageService.getRecipes());
     
     setCurrentRecipeId(newRecipe.id);
     setRecipeName(newRecipe.name);
@@ -633,7 +618,7 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
                           <input
                               type="number"
                               step="any"
-                              value={getDisplayWeight((totalFlour * ing.percentage) / 100)}
+                              value={getDisplayWeight(calculateIngredientWeight(totalFlour, ing.percentage))}
                               onChange={(e) => handleWeightChange(ing.id, e.target.value)}
                               className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6 text-right"
                           />
