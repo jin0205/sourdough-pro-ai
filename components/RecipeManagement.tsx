@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import RecipeCalculator from './RecipeCalculator';
 import RecipeLibrary from './RecipeLibrary';
 import { SavedRecipe } from '../types';
+import { storageService } from '../services/storageService';
 
 type ViewMode = 'library' | 'workbench';
 
@@ -13,23 +14,12 @@ const RecipeManagement: React.FC = () => {
     // Load recipes on mount and when view changes to library (to catch updates)
     useEffect(() => {
         const loadRecipes = () => {
-            const saved = localStorage.getItem('sourdough_recipes');
-            if (saved) {
-                try {
-                    const parsed = JSON.parse(saved);
-                    // Ensure legacy data has required fields
-                    const migrated = parsed.map((r: any) => ({
-                        ...r,
-                        version: r.version || 1,
-                        history: r.history || []
-                    }));
-                    setSavedRecipes(migrated);
-                } catch (e) {
-                    console.error('Failed to load recipes', e);
-                }
-            }
+            setSavedRecipes(storageService.getRecipes());
         };
         loadRecipes();
+
+        window.addEventListener('storage', loadRecipes);
+        return () => window.removeEventListener('storage', loadRecipes);
     }, [view]);
 
     const handleEditRecipe = (recipe: SavedRecipe) => {
@@ -44,9 +34,8 @@ const RecipeManagement: React.FC = () => {
 
     const handleDeleteRecipe = (id: string) => {
         if (window.confirm('Are you sure you want to delete this recipe? This cannot be undone.')) {
-            const updated = savedRecipes.filter(r => r.id !== id);
-            setSavedRecipes(updated);
-            localStorage.setItem('sourdough_recipes', JSON.stringify(updated));
+            storageService.deleteRecipe(id);
+            setSavedRecipes(storageService.getRecipes());
         }
     };
 

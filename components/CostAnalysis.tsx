@@ -2,17 +2,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { SavedRecipe, InventoryItem } from '../types';
 import { BoxIcon } from './icons/BoxIcon';
+import { storageService } from '../services/storageService';
 
 const CostAnalysis: React.FC = () => {
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
   useEffect(() => {
-    const recipesStr = localStorage.getItem('sourdough_recipes');
-    if (recipesStr) setSavedRecipes(JSON.parse(recipesStr));
-
-    const invStr = localStorage.getItem('sourdough_inventory');
-    if (invStr) setInventory(JSON.parse(invStr));
+    const loadData = () => {
+        setSavedRecipes(storageService.getRecipes());
+        setInventory(storageService.getInventory());
+    };
+    loadData();
+    window.addEventListener('storage', loadData);
+    return () => window.removeEventListener('storage', loadData);
   }, []);
 
   const getCostPerKg = (name: string, inventoryId?: string, snapshotCost?: number): number => {

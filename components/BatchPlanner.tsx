@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { SavedRecipe, PlannerItem, InventoryItem } from '../types';
+import { storageService } from '../services/storageService';
 
 const BatchPlanner: React.FC = () => {
   const [plannerItems, setPlannerItems] = useState<PlannerItem[]>([]);
@@ -13,73 +14,25 @@ const BatchPlanner: React.FC = () => {
 
   // Load saved recipes, persisted plan, and inventory
   useEffect(() => {
-    const recipesStr = localStorage.getItem('sourdough_recipes');
-    let currentRecipes: SavedRecipe[] = [];
-    if (recipesStr) {
-      try {
-        currentRecipes = JSON.parse(recipesStr);
-        setSavedRecipes(currentRecipes);
-      } catch (e) {
-        console.error('Failed to load recipes', e);
-      }
-    }
+    const loadData = () => {
+        setSavedRecipes(storageService.getRecipes());
+        // syncPlannerItems handles valid items and version updates
+        setPlannerItems(storageService.syncPlannerItems());
+        setInventory(storageService.getInventory());
+    };
 
-    const planStr = localStorage.getItem('sourdough_planner_items');
-    let currentPlan: PlannerItem[] = [];
-    if (planStr) {
-      try {
-        currentPlan = JSON.parse(planStr);
-      } catch (e) {
-        console.error('Failed to load plan', e);
-      }
-    }
+    loadData();
 
-    // SYNC LOGIC: Ensure Planner Items are valid against saved recipes
-    const validPlannerItems: PlannerItem[] = [];
-    let hasChanges = false;
-    const recipeMap = new Map(currentRecipes.map(r => [r.id, r]));
-
-    currentPlan.forEach(item => {
-        const freshRecipe = recipeMap.get(item.recipe.id);
-        if (!freshRecipe) {
-             // Recipe Deleted - remove from plan
-             hasChanges = true;
-             return;
-        }
-
-        if (freshRecipe.version !== item.recipe.version) {
-             // Recipe Updated/Reverted - update plan
-             validPlannerItems.push({ ...item, recipe: freshRecipe });
-             hasChanges = true;
-        } else {
-             validPlannerItems.push(item);
-        }
-    });
-
-    setPlannerItems(validPlannerItems);
-    if (hasChanges) {
-        localStorage.setItem('sourdough_planner_items', JSON.stringify(validPlannerItems));
-    }
-
-    const invStr = localStorage.getItem('sourdough_inventory');
-    if (invStr) {
-        try {
-            setInventory(JSON.parse(invStr));
-        } catch (e) {
-            console.error('Failed to load inventory', e);
-        }
-    }
+    // Listen for storage events (e.g. changes in other tabs)
+    window.addEventListener('storage', loadData);
+    return () => window.removeEventListener('storage', loadData);
   }, []);
 
-  // Persist plan changes
-  useEffect(() => {
-    if (plannerItems.length > 0) {
-         localStorage.setItem('sourdough_planner_items', JSON.stringify(plannerItems));
-    } else {
-        const existing = localStorage.getItem('sourdough_planner_items');
-        if (existing) localStorage.setItem('sourdough_planner_items', JSON.stringify([]));
-    }
-  }, [plannerItems]);
+  // Persist plan changes via storageService
+  const updatePlan = (newItems: PlannerItem[]) => {
+      setPlannerItems(newItems);
+      storageService.savePlannerItems(newItems);
+  };
 
   const addToPlan = (recipe: SavedRecipe) => {
     const newItem: PlannerItem = {
@@ -87,18 +40,19 @@ const BatchPlanner: React.FC = () => {
       recipe: recipe,
       count: recipe.numberOfLoaves
     };
-    setPlannerItems([...plannerItems, newItem]);
+    updatePlan([...plannerItems, newItem]);
   };
 
   const removeFromPlan = (uniqueId: string) => {
-    setPlannerItems(plannerItems.filter(i => i.uniqueId !== uniqueId));
+    updatePlan(plannerItems.filter(i => i.uniqueId !== uniqueId));
   };
 
   const updatePlanCount = (uniqueId: string, countStr: string) => {
     const count = parseFloat(countStr);
-    setPlannerItems(plannerItems.map(i =>
+    const updated = plannerItems.map(i =>
       i.uniqueId === uniqueId ? { ...i, count: isNaN(count) ? 0 : count } : i
-    ));
+    );
+    updatePlan(updated);
   };
 
   const plannerSummary = useMemo<{ summary: Record<string, { weight: number, cost: number }>; totalDough: number; totalCost: number }>(() => {
@@ -182,7 +136,7 @@ const BatchPlanner: React.FC = () => {
           count: parseFloat((item.count * factor).toFixed(2))
       }));
 
-      setPlannerItems(updatedItems);
+      updatePlan(updatedItems);
       setBatchScaleValue(''); // Reset input to indicate completion
   };
 
@@ -224,7 +178,7 @@ const BatchPlanner: React.FC = () => {
             <div className="flex justify-between items-center mb-3">
                <h3 className="font-semibold text-stone-800">Current Plan</h3>
                {plannerItems.length > 0 && (
-                   <button onClick={() => setPlannerItems([])} className="text-xs text-red-500 hover:text-red-700">Clear All</button>
+                   <button onClick={() => updatePlan([])} className="text-xs text-red-500 hover:text-red-700">Clear All</button>
                )}
             </div>
             
