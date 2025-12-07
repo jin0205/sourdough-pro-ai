@@ -7,6 +7,7 @@ import Spinner from './Spinner';
 import { getRecipeSuggestions } from '../services/geminiService';
 import { storageService } from '../services/storageService';
 import { calculateTotalFlour, calculateIngredientWeight } from '../utils/recipeMath';
+import Tabs from './Tabs';
 
 const COMMON_INGREDIENTS = [
   'Bread Flour',
@@ -65,6 +66,10 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [expandedRecipeId, setExpandedRecipeId] = useState<string | null>(null);
 
+  // New Fields
+  const [instructions, setInstructions] = useState<string>('');
+  const [notes, setNotes] = useState<string>('');
+
   // Inventory State
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
@@ -84,6 +89,8 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
           setIngredients(initialRecipe.ingredients);
           setBaseFlourName(initialRecipe.baseFlourName || 'Bread Flour');
           setBaseFlourCost(initialRecipe.baseFlourCostPerKg ? initialRecipe.baseFlourCostPerKg.toString() : '');
+          setInstructions(initialRecipe.instructions || '');
+          setNotes(initialRecipe.notes || '');
       } else {
           // Reset if new
           setCurrentRecipeId(null);
@@ -94,6 +101,8 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
           setIngredients(initialIngredientsList.map(i => ({...i})));
           setBaseFlourName('Bread Flour');
           setBaseFlourCost('');
+          setInstructions('');
+          setNotes('');
       }
   }, [initialRecipe]);
 
@@ -275,7 +284,9 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
       version: currentVersion,
       baseFlourName,
       baseFlourInventoryId: baseFlourMatch?.id,
-      baseFlourCostPerKg: parseFloat(baseFlourCost) || 0
+      baseFlourCostPerKg: parseFloat(baseFlourCost) || 0,
+      instructions,
+      notes
     };
 
     if (currentRecipeId) {
@@ -290,7 +301,9 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
                 version: existingRecipe.version,
                 baseFlourName: existingRecipe.baseFlourName,
                 baseFlourInventoryId: existingRecipe.baseFlourInventoryId,
-                baseFlourCostPerKg: existingRecipe.baseFlourCostPerKg
+                baseFlourCostPerKg: existingRecipe.baseFlourCostPerKg,
+                instructions: existingRecipe.instructions,
+                notes: existingRecipe.notes
             };
 
             const updated: SavedRecipe = {
@@ -342,7 +355,9 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
         history: [],
         baseFlourName,
         baseFlourInventoryId: baseFlourMatch?.id,
-        baseFlourCostPerKg: parseFloat(baseFlourCost) || 0
+        baseFlourCostPerKg: parseFloat(baseFlourCost) || 0,
+        instructions,
+        notes
     };
 
     storageService.addOrUpdateRecipe(newRecipe);
@@ -363,6 +378,8 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
           setIngredients(snapshot.ingredients);
           setBaseFlourName(snapshot.baseFlourName || 'Bread Flour');
           setBaseFlourCost(snapshot.baseFlourCostPerKg ? snapshot.baseFlourCostPerKg.toString() : '');
+          setInstructions(snapshot.instructions || '');
+          setNotes(snapshot.notes || '');
       }
   };
 
@@ -439,266 +456,298 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
             </div>
         )}
 
-      {/* Unified Batch Configuration Panel */}
-      <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm mb-8">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-            <div>
-                <h3 className="text-lg font-bold text-stone-800">Batch Configuration</h3>
-            </div>
-            
-            {/* Rounding Select */}
-            <div className="flex items-center gap-2 bg-stone-50 px-3 py-1.5 rounded-lg border border-stone-200">
-                <label htmlFor="rounding" className="text-xs font-medium text-stone-600 uppercase tracking-wide">Rounding</label>
-                <select 
-                    id="rounding"
-                    value={roundingMode}
-                    onChange={(e) => setRoundingMode(e.target.value as RoundingMode)}
-                    className="bg-transparent border-none text-sm font-medium text-stone-800 focus:ring-0 cursor-pointer pl-0 pr-8 py-0"
-                >
-                    <option value="exact">Exact (0.1g)</option>
-                    <option value="1g">Nearest 1g/ml</option>
-                    <option value="5g">Nearest 5g/ml</option>
-                </select>
-            </div>
-        </div>
+      <Tabs tabs={['Formula', 'Method & Notes', 'Cost & AI']}>
+        {/* Tab 1: Formula */}
+        <div>
+             {/* Unified Batch Configuration Panel */}
+            <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm mb-8">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                    <div>
+                        <h3 className="text-lg font-bold text-stone-800">Batch Configuration</h3>
+                    </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Number of Loaves</label>
-                <input
-                    type="number"
-                    step="0.5"
-                    value={numberOfLoaves}
-                    onChange={(e) => handleNumberOfLoavesChange(e.target.value)}
-                    className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
-                    placeholder="2"
-                />
-            </div>
-            
-            <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Weight per Loaf (g)</label>
-                <input
-                    type="number"
-                    step="10"
-                    value={weightPerLoaf}
-                    onChange={(e) => handleWeightPerLoafChange(e.target.value)}
-                    className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
-                    placeholder="900"
-                />
-            </div>
-
-            <div>
-                <label className="block text-sm font-medium text-stone-700 mb-1">Total Batch Weight (g)</label>
-                <input
-                    type="number"
-                    step="10"
-                    value={Math.round(currentTotalWeight)}
-                    onChange={(e) => handleTotalWeightChange(e.target.value)}
-                    className="block w-full px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg text-amber-900 font-semibold"
-                    placeholder="e.g. 5000"
-                />
-            </div>
-        </div>
-        
-        {/* Quick Scale Utility */}
-        <div className="mt-6 pt-6 border-t border-stone-100">
-             <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-3">Quick Actions</h4>
-             <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex items-center gap-2">
-                    <span className="text-sm text-stone-600">Scale by:</span>
-                    <input
-                        type="number"
-                        value={scalePercentage}
-                        onChange={(e) => setScalePercentage(e.target.value)}
-                        className="w-20 px-3 py-1.5 text-sm border border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500"
-                        placeholder="100"
-                    />
-                    <span className="text-sm text-stone-500">%</span>
-                    <button 
-                        onClick={applyScaling}
-                        className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded-md text-sm font-medium hover:bg-stone-200 border border-stone-200"
-                    >
-                        Apply
-                    </button>
+                    {/* Rounding Select */}
+                    <div className="flex items-center gap-2 bg-stone-50 px-3 py-1.5 rounded-lg border border-stone-200">
+                        <label htmlFor="rounding" className="text-xs font-medium text-stone-600 uppercase tracking-wide">Rounding</label>
+                        <select
+                            id="rounding"
+                            value={roundingMode}
+                            onChange={(e) => setRoundingMode(e.target.value as RoundingMode)}
+                            className="bg-transparent border-none text-sm font-medium text-stone-800 focus:ring-0 cursor-pointer pl-0 pr-8 py-0"
+                        >
+                            <option value="exact">Exact (0.1g)</option>
+                            <option value="1g">Nearest 1g/ml</option>
+                            <option value="5g">Nearest 5g/ml</option>
+                        </select>
+                    </div>
                 </div>
-            </div>
-        </div>
-      </div>
-      
-      {/* Ingredients Table */}
-      <div className="overflow-x-auto mb-6 shadow-sm rounded-lg border border-stone-200">
-        <table className="min-w-full divide-y divide-stone-200">
-          <thead className="bg-stone-50">
-            <tr>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider w-1/3">Ingredient</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Baker's %</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Weight (g)</th>
-              <th scope="col" className="relative px-6 py-3"><span className="sr-only">Remove</span></th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-stone-200">
-            <tr className="bg-stone-50 font-semibold">
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
-                  <div className="flex flex-col">
-                      <span className="text-xs text-stone-500 mb-1">Total Flour Base (100%)</span>
-                      <div className="flex gap-2">
-                          <select
-                              className="block w-1/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-xs"
-                              value={COMMON_INGREDIENTS.includes(baseFlourName) ? baseFlourName : ""}
-                              onChange={(e) => e.target.value && setBaseFlourName(e.target.value)}
-                          >
-                              <option value="">Quick Select...</option>
-                              {COMMON_INGREDIENTS.map(c => <option key={`bf-${c}`} value={c}>{c}</option>)}
-                          </select>
-                          <input
-                            type="text"
-                            list="all-ingredients-list"
-                            value={baseFlourName}
-                            onChange={(e) => setBaseFlourName(e.target.value)}
-                            className="block w-2/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-sm font-normal"
-                            placeholder="Type name..."
-                          />
-                      </div>
-                  </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500">100%</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
-                  <div className="relative rounded-md shadow-sm w-28">
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Number of Loaves</label>
                         <input
                             type="number"
-                            step="any"
-                            value={getDisplayWeight(totalFlour)}
-                            onChange={(e) => handleBaseFlourWeightChange(e.target.value)}
-                            className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6 text-right"
+                            step="0.5"
+                            value={numberOfLoaves}
+                            onChange={(e) => handleNumberOfLoavesChange(e.target.value)}
+                            className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
+                            placeholder="2"
                         />
-                         <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
-                           <span className="text-stone-400 sm:text-sm">g</span>
-                         </div>
                     </div>
-              </td>
-              <td></td>
-            </tr>
-            {ingredients.map((ing) => (
-                <tr key={ing.id}>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                     <div className="flex gap-2">
-                         <select
-                              className="block w-1/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-xs"
-                              value={COMMON_INGREDIENTS.includes(ing.name) ? ing.name : ""}
-                              onChange={(e) => e.target.value && handleIngredientNameChange(ing.id, e.target.value)}
-                          >
-                              <option value="">Quick Select...</option>
-                              {COMMON_INGREDIENTS.map(c => <option key={`ing-${ing.id}-${c}`} value={c}>{c}</option>)}
-                          </select>
-                         <input
-                           type="text"
-                           list="all-ingredients-list"
-                           value={ing.name}
-                           onChange={(e) => handleIngredientNameChange(ing.id, e.target.value)}
-                           className="block w-2/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
-                           placeholder="Type custom name..."
-                         />
-                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="relative rounded-md shadow-sm w-24">
-                          <input
-                              type="number"
-                              value={ing.percentage}
-                              onChange={(e) => handlePercentageChange(ing.id, e.target.value)}
-                              className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6"
-                          />
-                           <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
-                             <span className="text-stone-400 sm:text-sm">%</span>
-                           </div>
-                      </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500">
-                      <div className="relative rounded-md shadow-sm w-28">
-                          <input
-                              type="number"
-                              step="any"
-                              value={getDisplayWeight(calculateIngredientWeight(totalFlour, ing.percentage))}
-                              onChange={(e) => handleWeightChange(ing.id, e.target.value)}
-                              className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6 text-right"
-                          />
-                           <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
-                             <span className="text-stone-400 sm:text-sm">g</span>
-                           </div>
-                      </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button onClick={() => removeIngredient(ing.id)} className="text-red-600 hover:text-red-900">Remove</button>
-                  </td>
-                </tr>
-            ))}
-            <tr className="bg-stone-100 font-medium border-t-2 border-stone-200">
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-800">Total Batch</td>
-                <td className="px-6 py-4"></td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-800 text-right pr-12">
-                    {(
-                        parseFloat(getDisplayWeight(totalFlour)) + 
-                        ingredients.reduce((sum, ing) => sum + parseFloat(getDisplayWeight((totalFlour * ing.percentage) / 100)), 0)
-                    ).toFixed(roundingMode === 'exact' ? 1 : 0)} g
-                </td>
-                <td></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      
-      <div className="flex justify-between items-center mb-8">
-        <button onClick={addIngredient} className="text-amber-700 hover:text-amber-900 font-medium text-sm flex items-center">
-            <span className="text-lg mr-1">+</span> Add Ingredient
-        </button>
-      </div>
 
-       {/* AI Recipe Assistant Section */}
-       <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-xl border border-indigo-100 shadow-sm mb-8">
-            <div className="flex items-center gap-2 mb-4">
-                <SparklesIcon className="w-6 h-6 text-indigo-600" />
-                <h3 className="text-lg font-bold text-indigo-900">AI Recipe Developer</h3>
+                    <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Weight per Loaf (g)</label>
+                        <input
+                            type="number"
+                            step="10"
+                            value={weightPerLoaf}
+                            onChange={(e) => handleWeightPerLoafChange(e.target.value)}
+                            className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
+                            placeholder="900"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Total Batch Weight (g)</label>
+                        <input
+                            type="number"
+                            step="10"
+                            value={Math.round(currentTotalWeight)}
+                            onChange={(e) => handleTotalWeightChange(e.target.value)}
+                            className="block w-full px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg text-amber-900 font-semibold"
+                            placeholder="e.g. 5000"
+                        />
+                    </div>
+                </div>
+
+                {/* Quick Scale Utility */}
+                <div className="mt-6 pt-6 border-t border-stone-100">
+                    <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-3">Quick Actions</h4>
+                    <div className="flex flex-col sm:flex-row gap-4">
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm text-stone-600">Scale by:</span>
+                            <input
+                                type="number"
+                                value={scalePercentage}
+                                onChange={(e) => setScalePercentage(e.target.value)}
+                                className="w-20 px-3 py-1.5 text-sm border border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500"
+                                placeholder="100"
+                            />
+                            <span className="text-sm text-stone-500">%</span>
+                            <button
+                                onClick={applyScaling}
+                                className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded-md text-sm font-medium hover:bg-stone-200 border border-stone-200"
+                            >
+                                Apply
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <p className="text-sm text-indigo-700 mb-4">
-                Want to tweak this recipe? Tell the AI your goal (e.g., "Make the crumb more open," "Add a nutty flavor," "Increase sourness") and get scientific suggestions.
-            </p>
             
-            <div className="flex gap-3 mb-4">
-                <input 
-                    type="text" 
-                    value={aiGoal}
-                    onChange={(e) => setAiGoal(e.target.value)}
-                    placeholder="Describe your goal..."
-                    className="flex-grow px-4 py-2 border border-indigo-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                    onKeyDown={(e) => e.key === 'Enter' && handleGetSuggestion()}
-                />
-                <button 
-                    onClick={handleGetSuggestion}
-                    disabled={isAiLoading || !aiGoal.trim()}
-                    className="px-6 py-2 bg-indigo-600 text-white rounded-md font-medium text-sm hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
-                >
-                    {isAiLoading ? <Spinner /> : 'Get Suggestions'}
+            {/* Ingredients Table */}
+            <div className="overflow-x-auto mb-6 shadow-sm rounded-lg border border-stone-200">
+                <table className="min-w-full divide-y divide-stone-200">
+                <thead className="bg-stone-50">
+                    <tr>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider w-1/3">Ingredient</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Baker's %</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Weight (g)</th>
+                    <th scope="col" className="relative px-6 py-3"><span className="sr-only">Remove</span></th>
+                    </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-stone-200">
+                    <tr className="bg-stone-50 font-semibold">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
+                        <div className="flex flex-col">
+                            <span className="text-xs text-stone-500 mb-1">Total Flour Base (100%)</span>
+                            <div className="flex gap-2">
+                                <select
+                                    className="block w-1/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-xs"
+                                    value={COMMON_INGREDIENTS.includes(baseFlourName) ? baseFlourName : ""}
+                                    onChange={(e) => e.target.value && setBaseFlourName(e.target.value)}
+                                >
+                                    <option value="">Quick Select...</option>
+                                    {COMMON_INGREDIENTS.map(c => <option key={`bf-${c}`} value={c}>{c}</option>)}
+                                </select>
+                                <input
+                                    type="text"
+                                    list="all-ingredients-list"
+                                    value={baseFlourName}
+                                    onChange={(e) => setBaseFlourName(e.target.value)}
+                                    className="block w-2/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-sm font-normal"
+                                    placeholder="Type name..."
+                                />
+                            </div>
+                        </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500">100%</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
+                        <div className="relative rounded-md shadow-sm w-28">
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={getDisplayWeight(totalFlour)}
+                                    onChange={(e) => handleBaseFlourWeightChange(e.target.value)}
+                                    className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6 text-right"
+                                />
+                                <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
+                                <span className="text-stone-400 sm:text-sm">g</span>
+                                </div>
+                            </div>
+                    </td>
+                    <td></td>
+                    </tr>
+                    {ingredients.map((ing) => (
+                        <tr key={ing.id}>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex gap-2">
+                                <select
+                                    className="block w-1/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-xs"
+                                    value={COMMON_INGREDIENTS.includes(ing.name) ? ing.name : ""}
+                                    onChange={(e) => e.target.value && handleIngredientNameChange(ing.id, e.target.value)}
+                                >
+                                    <option value="">Quick Select...</option>
+                                    {COMMON_INGREDIENTS.map(c => <option key={`ing-${ing.id}-${c}`} value={c}>{c}</option>)}
+                                </select>
+                                <input
+                                type="text"
+                                list="all-ingredients-list"
+                                value={ing.name}
+                                onChange={(e) => handleIngredientNameChange(ing.id, e.target.value)}
+                                className="block w-2/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
+                                placeholder="Type custom name..."
+                                />
+                            </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="relative rounded-md shadow-sm w-24">
+                                <input
+                                    type="number"
+                                    value={ing.percentage}
+                                    onChange={(e) => handlePercentageChange(ing.id, e.target.value)}
+                                    className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6"
+                                />
+                                <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
+                                    <span className="text-stone-400 sm:text-sm">%</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500">
+                            <div className="relative rounded-md shadow-sm w-28">
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={getDisplayWeight(calculateIngredientWeight(totalFlour, ing.percentage))}
+                                    onChange={(e) => handleWeightChange(ing.id, e.target.value)}
+                                    className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6 text-right"
+                                />
+                                <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
+                                    <span className="text-stone-400 sm:text-sm">g</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <button onClick={() => removeIngredient(ing.id)} className="text-red-600 hover:text-red-900">Remove</button>
+                        </td>
+                        </tr>
+                    ))}
+                    <tr className="bg-stone-100 font-medium border-t-2 border-stone-200">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-800">Total Batch</td>
+                        <td className="px-6 py-4"></td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-800 text-right pr-12">
+                            {(
+                                parseFloat(getDisplayWeight(totalFlour)) +
+                                ingredients.reduce((sum, ing) => sum + parseFloat(getDisplayWeight((totalFlour * ing.percentage) / 100)), 0)
+                            ).toFixed(roundingMode === 'exact' ? 1 : 0)} g
+                        </td>
+                        <td></td>
+                    </tr>
+                </tbody>
+                </table>
+            </div>
+            
+            <div className="flex justify-between items-center mb-8">
+                <button onClick={addIngredient} className="text-amber-700 hover:text-amber-900 font-medium text-sm flex items-center">
+                    <span className="text-lg mr-1">+</span> Add Ingredient
                 </button>
             </div>
+        </div>
 
-            {aiSuggestion && (
-                <div className="bg-white p-5 rounded-lg border border-indigo-100 shadow-sm animate-fade-in">
-                    <h4 className="font-semibold text-indigo-900 mb-2 text-sm uppercase tracking-wide">AI Suggestions</h4>
-                    <div className="prose prose-sm prose-indigo max-w-none" dangerouslySetInnerHTML={{ __html: aiSuggestion.replace(/\n/g, '<br />') }} />
-                </div>
-            )}
-       </div>
+        {/* Tab 2: Method & Notes */}
+        <div className="space-y-6">
+            <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm">
+                <label className="block text-lg font-bold text-stone-800 mb-2">Instructions / Method</label>
+                <p className="text-sm text-stone-500 mb-4">Detailed steps for preparing and baking.</p>
+                <textarea
+                    value={instructions}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    className="block w-full px-4 py-3 border border-stone-300 rounded-lg text-sm focus:ring-amber-500 focus:border-amber-500 h-64 font-mono leading-relaxed"
+                    placeholder="1. Autolyse..."
+                />
+            </div>
+             <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm">
+                <label className="block text-lg font-bold text-stone-800 mb-2">Recipe Notes</label>
+                <p className="text-sm text-stone-500 mb-4">Observations, temperature log, or tasting notes.</p>
+                <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="block w-full px-4 py-3 border border-stone-300 rounded-lg text-sm focus:ring-amber-500 focus:border-amber-500 h-32"
+                    placeholder="Room temp was 24C..."
+                />
+            </div>
+        </div>
 
-      <RecipeCost
-        ingredients={ingredients}
-        totalFlour={totalFlour}
-        numberOfLoaves={numberOfLoaves}
-        baseFlourName={baseFlourName}
-        baseFlourCost={baseFlourCost}
-        onUpdateBaseFlourCost={setBaseFlourCost}
-        onUpdateIngredientCost={handleCostChange}
-        inventory={inventory}
-      />
+        {/* Tab 3: Cost & AI */}
+        <div>
+             {/* AI Recipe Assistant Section */}
+            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-xl border border-indigo-100 shadow-sm mb-8">
+                    <div className="flex items-center gap-2 mb-4">
+                        <SparklesIcon className="w-6 h-6 text-indigo-600" />
+                        <h3 className="text-lg font-bold text-indigo-900">AI Recipe Developer</h3>
+                    </div>
+                    <p className="text-sm text-indigo-700 mb-4">
+                        Want to tweak this recipe? Tell the AI your goal (e.g., "Make the crumb more open," "Add a nutty flavor," "Increase sourness") and get scientific suggestions.
+                    </p>
+
+                    <div className="flex gap-3 mb-4">
+                        <input
+                            type="text"
+                            value={aiGoal}
+                            onChange={(e) => setAiGoal(e.target.value)}
+                            placeholder="Describe your goal..."
+                            className="flex-grow px-4 py-2 border border-indigo-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                            onKeyDown={(e) => e.key === 'Enter' && handleGetSuggestion()}
+                        />
+                        <button
+                            onClick={handleGetSuggestion}
+                            disabled={isAiLoading || !aiGoal.trim()}
+                            className="px-6 py-2 bg-indigo-600 text-white rounded-md font-medium text-sm hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
+                        >
+                            {isAiLoading ? <Spinner /> : 'Get Suggestions'}
+                        </button>
+                    </div>
+
+                    {aiSuggestion && (
+                        <div className="bg-white p-5 rounded-lg border border-indigo-100 shadow-sm animate-fade-in">
+                            <h4 className="font-semibold text-indigo-900 mb-2 text-sm uppercase tracking-wide">AI Suggestions</h4>
+                            <div className="prose prose-sm prose-indigo max-w-none" dangerouslySetInnerHTML={{ __html: aiSuggestion.replace(/\n/g, '<br />') }} />
+                        </div>
+                    )}
+            </div>
+
+            <RecipeCost
+                ingredients={ingredients}
+                totalFlour={totalFlour}
+                numberOfLoaves={numberOfLoaves}
+                baseFlourName={baseFlourName}
+                baseFlourCost={baseFlourCost}
+                onUpdateBaseFlourCost={setBaseFlourCost}
+                onUpdateIngredientCost={handleCostChange}
+                inventory={inventory}
+            />
+        </div>
+      </Tabs>
       
       <div className="mb-8"></div>
 

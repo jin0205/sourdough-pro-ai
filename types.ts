@@ -32,6 +32,8 @@ export interface RecipeSnapshot {
   baseFlourName?: string;
   baseFlourInventoryId?: string;
   baseFlourCostPerKg?: number;
+  instructions?: string;
+  notes?: string;
 }
 
 export interface SavedRecipe extends RecipeSnapshot {
