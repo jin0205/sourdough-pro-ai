@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import Header from './components/Header';
-import Tabs from './components/Tabs';
+import AppTabs from './components/AppTabs';
 import RecipeManagement from './components/RecipeManagement';
 import BakingLab from './components/BakingLab';
 import BatchPlanner from './components/BatchPlanner';
@@ -35,7 +35,7 @@ const App: React.FC = () => {
       <Header />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-          <Tabs activeTab={activeTab} setActiveTab={setActiveTab} />
+          <AppTabs activeTab={activeTab} setActiveTab={setActiveTab} />
           <div className="p-6 md:p-10">
             {renderContent()}
           </div>

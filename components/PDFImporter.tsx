@@ -11,6 +11,7 @@ interface ExtractedData {
     numberOfLoaves: number;
     weightPerLoaf: number;
     ingredients: { name: string; weight: number }[];
+    instructions?: string;
 }
 
 interface PreviewIngredient {
@@ -24,6 +25,7 @@ interface PreviewState {
     numberOfLoaves: number;
     weightPerLoaf: number;
     ingredients: PreviewIngredient[];
+    instructions: string;
 }
 
 const FLOUR_KEYWORDS = [
@@ -117,7 +119,8 @@ const PDFImporter: React.FC = () => {
                 name: data.name || "Imported Recipe",
                 numberOfLoaves: Number(data.numberOfLoaves) || 1,
                 weightPerLoaf: Number(data.weightPerLoaf) || 1000,
-                ingredients: processedIngredients
+                ingredients: processedIngredients,
+                instructions: data.instructions || ""
             });
         } catch (err: any) {
             console.error(err);
@@ -174,7 +177,8 @@ const PDFImporter: React.FC = () => {
             date: new Date().toLocaleDateString(),
             version: 1,
             history: [],
-            baseFlourName: baseFlourName
+            baseFlourName: baseFlourName,
+            instructions: previewData.instructions // Added instructions
         };
 
         // 4. Save to Storage Service
@@ -323,6 +327,17 @@ const PDFImporter: React.FC = () => {
                                      * Warning: No flour selected. Baker's percentages cannot be calculated without a Flour Base.
                                  </p>
                              )}
+                        </div>
+
+                        {/* Instructions Section */}
+                        <div>
+                             <label className="block text-xs font-medium text-stone-500 mb-1">Extracted Method & Notes</label>
+                             <textarea
+                                value={previewData.instructions}
+                                onChange={(e) => handleInputChange('instructions', e.target.value)}
+                                className="block w-full px-3 py-2 border border-stone-300 rounded-md text-sm focus:ring-amber-500 focus:border-amber-500 h-32"
+                                placeholder="Extracted instructions will appear here..."
+                             />
                         </div>
 
                         <div className="flex justify-end pt-4">

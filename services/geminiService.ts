@@ -80,7 +80,8 @@ export const parseRecipePdf = async (pdfFile: File): Promise<string> => {
           "weightPerLoaf": number,
           "ingredients": [
             { "name": "Ingredient Name", "weight": number }
-          ]
+          ],
+          "instructions": "Full method/instructions as markdown text"
         }
         `;
 
