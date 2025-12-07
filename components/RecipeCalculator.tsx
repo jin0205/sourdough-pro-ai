@@ -7,15 +7,31 @@ import { BoxIcon } from './icons/BoxIcon';
 import Spinner from './Spinner';
 import { getRecipeSuggestions } from '../services/geminiService';
 
-const COMMON_FLOURS = [
-  'Bread Flour', 'Strong White Flour', 'Whole Wheat Flour', 'Whole Grain Flour',
-  'Rye Flour', 'Spelt Flour', 'Semolina', 'Durum', 'Einkorn', 'Emmer', 'Kamut',
-  'All-Purpose Flour', 'High Protein Flour', 'Manitoba'
+// EXPANDED COMMON INGREDIENTS LISTS
+export const COMMON_FLOURS = [
+  'Bread Flour', 'Strong White Flour', 'All-Purpose Flour', 'Whole Wheat Flour', 
+  'Whole Grain Flour', 'High Gluten Flour', 'Pastry Flour', 'Cake Flour',
+  'Rye Flour', 'Whole Rye Flour', 'Medium Rye', 'Dark Rye', 'Pumpernickel',
+  'Spelt Flour', 'White Spelt', 'Semolina', 'Durum Flour', 
+  'Einkorn', 'Emmer', 'Kamut (Khorasan)', 'Barley Flour', 'Buckwheat Flour',
+  'Type 00', 'Type 0', 'Type 1', 'Type 2', 'Integrale', // Italian
+  'T45', 'T55', 'T65', 'T80', 'T110', 'T150', 'T170', // French
+  'Manitoba', 'Rice Flour', 'Cornmeal'
 ];
 
-const COMMON_ADDINS = [
-  'Water', 'Levain', 'Salt', 'Sugar', 'Honey', 'Olive Oil', 
-  'Butter', 'Milk', 'Seeds', 'Yeast', 'Malt Powder', 'Raisins', 'Walnuts'
+export const COMMON_ADDINS = [
+  // Liquids & Starters
+  'Water', 'Levain', 'Stiff Levain', 'Poolish', 'Biga', 'Milk', 'Buttermilk', 'Beer', 'Coffee',
+  // Salts & Yeasts
+  'Salt', 'Sea Salt', 'Kosher Salt', 'Instant Yeast', 'Active Dry Yeast', 'Fresh Yeast',
+  // Fats
+  'Olive Oil', 'Butter', 'Lard', 'Vegetable Oil', 'Coconut Oil',
+  // Sweeteners
+  'Sugar', 'Brown Sugar', 'Honey', 'Molasses', 'Maple Syrup', 'Malt Syrup', 'Diastatic Malt Powder', 'Non-Diastatic Malt',
+  // Inclusions
+  'Raisins', 'Cranberries', 'Walnuts', 'Pecans', 'Sunflower Seeds', 'Sesame Seeds', 'Pumpkin Seeds', 
+  'Flax Seeds', 'Chia Seeds', 'Poppy Seeds', 'Oats', 'Rolled Oats',
+  'Chocolate Chips', 'Cocoa Powder', 'Cinnamon', 'Cardamom', 'Cheese', 'Olives', 'Garlic'
 ];
 
 type RoundingMode = 'exact' | '1g' | '5g';
@@ -115,6 +131,28 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
         } catch (e) { console.error(e); }
     }
   }, []);
+  
+  // Auto-Link Ingredients to Inventory on Load/Change
+  useEffect(() => {
+      // Helper to link list items
+      const linkItems = (items: Ingredient[]) => {
+          return items.map(item => {
+              // Only link if not already linked to avoid overwriting specific user intent,
+              // unless the name matches perfectly and ID is missing.
+              if (!item.inventoryId) {
+                  const match = inventory.find(inv => inv.name.toLowerCase().trim() === item.name.toLowerCase().trim());
+                  if (match) {
+                      return { ...item, inventoryId: match.id };
+                  }
+              }
+              return item;
+          });
+      };
+
+      // We only run this on inventory load to establish connections, 
+      // or we could run it when ingredient names change (handled in updateItem).
+      // Here we just ensure initial connectivity if inventory loaded late.
+  }, [inventory]);
 
   // --- CALCULATION LOGIC ---
 
@@ -242,6 +280,7 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   };
 
   // Filter Common lists based on inventory
+  // If an item exists in inventory, we want it in the Inventory group, not the Common group to avoid duplicates in UI
   const filteredCommonFlours = useMemo(() => COMMON_FLOURS.filter(c => !inventory.some(i => i.name.toLowerCase() === c.toLowerCase())), [inventory]);
   const filteredCommonAddins = useMemo(() => COMMON_ADDINS.filter(c => !inventory.some(i => i.name.toLowerCase() === c.toLowerCase())), [inventory]);
 

@@ -2,6 +2,31 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { InventoryItem, PlannerItem, UnitOfMeasure, SavedRecipe } from '../types';
 import { CalculatorIcon } from './icons/CalculatorIcon';
+// Import the common lists for consistency. 
+// Ideally these would be in a shared constant file, but we will define the combined list here for the datalist.
+const COMMON_INGREDIENTS_LIST = [
+  // Flours
+  'Bread Flour', 'Strong White Flour', 'All-Purpose Flour', 'Whole Wheat Flour', 
+  'Whole Grain Flour', 'High Gluten Flour', 'Pastry Flour', 'Cake Flour',
+  'Rye Flour', 'Whole Rye Flour', 'Medium Rye', 'Dark Rye', 'Pumpernickel',
+  'Spelt Flour', 'White Spelt', 'Semolina', 'Durum Flour', 
+  'Einkorn', 'Emmer', 'Kamut (Khorasan)', 'Barley Flour', 'Buckwheat Flour',
+  'Type 00', 'Type 0', 'Type 1', 'Type 2', 'Integrale',
+  'T45', 'T55', 'T65', 'T80', 'T110', 'T150', 'T170',
+  'Manitoba', 'Rice Flour', 'Cornmeal',
+  // Liquids & Starters
+  'Water', 'Levain', 'Stiff Levain', 'Poolish', 'Biga', 'Milk', 'Buttermilk', 'Beer', 'Coffee',
+  // Salts & Yeasts
+  'Salt', 'Sea Salt', 'Kosher Salt', 'Instant Yeast', 'Active Dry Yeast', 'Fresh Yeast',
+  // Fats
+  'Olive Oil', 'Butter', 'Lard', 'Vegetable Oil', 'Coconut Oil',
+  // Sweeteners
+  'Sugar', 'Brown Sugar', 'Honey', 'Molasses', 'Maple Syrup', 'Malt Syrup', 'Diastatic Malt Powder', 'Non-Diastatic Malt',
+  // Inclusions
+  'Raisins', 'Cranberries', 'Walnuts', 'Pecans', 'Sunflower Seeds', 'Sesame Seeds', 'Pumpkin Seeds', 
+  'Flax Seeds', 'Chia Seeds', 'Poppy Seeds', 'Oats', 'Rolled Oats',
+  'Chocolate Chips', 'Cocoa Powder', 'Cinnamon', 'Cardamom', 'Cheese', 'Olives', 'Garlic'
+];
 
 const InventoryManagement: React.FC = () => {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -138,18 +163,32 @@ const InventoryManagement: React.FC = () => {
     plannerItems.forEach(item => {
         const { recipe, count } = item;
         const targetBatchWeight = (Number(count) || 0) * (Number(recipe.weightPerLoaf) || 0);
-        const totalPercentage = 1 + recipe.ingredients.reduce((sum, ing) => sum + (Number(ing.percentage) || 0) / 100, 0);
-        const flourWeight = totalPercentage > 0 ? targetBatchWeight / totalPercentage : 0;
+        
+        // --- NEW MULTI-FLOUR LOGIC for Requirements ---
+        // We must correctly iterate through all flours + ingredients
+        let flours = recipe.flours || [];
+        if (flours.length === 0 && recipe.baseFlourName) {
+            flours = [{ id: 1, name: recipe.baseFlourName, percentage: 100 }];
+        }
 
-        const baseName = recipe.baseFlourName || "Base Flour";
-        reqs[baseName] = (reqs[baseName] || 0) + flourWeight;
+        const totalFlourPct = flours.reduce((sum, f) => sum + (Number(f.percentage) || 0), 0);
+        const totalIngPct = recipe.ingredients.reduce((sum, ing) => sum + (Number(ing.percentage) || 0), 0);
+        const totalFormulaPct = totalFlourPct + totalIngPct;
 
-        recipe.ingredients.forEach(ing => {
-            if (!ing.name) return;
-            const weight = (flourWeight * (Number(ing.percentage) || 0)) / 100;
-            const name = ing.name.trim();
-            reqs[name] = (reqs[name] || 0) + weight;
-        });
+        // Total Flour Weight for this batch
+        const totalFlourWeight = totalFormulaPct > 0 ? targetBatchWeight / (totalFormulaPct / 100) : 0;
+
+        const processList = (list: any[]) => {
+            list.forEach(ing => {
+                if (!ing.name) return;
+                const weight = (totalFlourWeight * (Number(ing.percentage) || 0)) / 100;
+                const name = ing.name.trim();
+                reqs[name] = (reqs[name] || 0) + weight;
+            });
+        };
+
+        processList(flours);
+        processList(recipe.ingredients);
     });
     return reqs;
   }, [plannerItems]);
@@ -240,6 +279,13 @@ const InventoryManagement: React.FC = () => {
 
   return (
     <div className="animate-fade-in">
+       {/* DATALIST FOR AUTOCOMPLETE */}
+       <datalist id="common-ingredients">
+            {COMMON_INGREDIENTS_LIST.map((name, idx) => (
+                <option key={idx} value={name} />
+            ))}
+       </datalist>
+
        <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
             <h2 className="text-2xl font-bold text-stone-800 mb-1">Inventory Management</h2>
@@ -262,6 +308,7 @@ const InventoryManagement: React.FC = () => {
                       <label className="block text-xs font-medium text-stone-500 mb-1">Ingredient Name</label>
                       <input
                         type="text"
+                        list="common-ingredients" 
                         value={newItemName}
                         onChange={(e) => setNewItemName(e.target.value)}
                         placeholder="e.g., King Arthur Bread Flour"
