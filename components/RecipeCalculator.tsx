@@ -1,42 +1,34 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Ingredient, RecipeSnapshot, SavedRecipe, InventoryItem } from '../types';
 import RecipeCost from './RecipeCost';
 import { SparklesIcon } from './icons/SparklesIcon';
+import { BoxIcon } from './icons/BoxIcon';
 import Spinner from './Spinner';
 import { getRecipeSuggestions } from '../services/geminiService';
-import { storageService } from '../services/storageService';
-import { calculateTotalFlour, calculateIngredientWeight } from '../utils/recipeMath';
-import Tabs from './Tabs';
 
-const COMMON_INGREDIENTS = [
-  'Bread Flour',
-  'Strong White Flour',
-  'Whole Wheat Flour',
-  'Whole Grain Flour',
-  'Rye Flour',
-  'Spelt Flour',
-  'All-Purpose Flour',
-  'High Protein Flour',
-  'Water',
-  'Levain',
-  'Salt',
-  'Sugar',
-  'Honey',
-  'Olive Oil',
-  'Butter',
-  'Milk',
-  'Seeds',
-  'Yeast',
-  'Malt Powder'
+const COMMON_FLOURS = [
+  'Bread Flour', 'Strong White Flour', 'Whole Wheat Flour', 'Whole Grain Flour',
+  'Rye Flour', 'Spelt Flour', 'Semolina', 'Durum', 'Einkorn', 'Emmer', 'Kamut',
+  'All-Purpose Flour', 'High Protein Flour', 'Manitoba'
+];
+
+const COMMON_ADDINS = [
+  'Water', 'Levain', 'Salt', 'Sugar', 'Honey', 'Olive Oil', 
+  'Butter', 'Milk', 'Seeds', 'Yeast', 'Malt Powder', 'Raisins', 'Walnuts'
 ];
 
 type RoundingMode = 'exact' | '1g' | '5g';
 
-const initialIngredientsList: Ingredient[] = [
-  { id: 1, name: 'Water', percentage: 75 },
-  { id: 2, name: 'Levain', percentage: 20 },
-  { id: 3, name: 'Salt', percentage: 2 },
+// Initial defaults
+const initialFlours: Ingredient[] = [
+    { id: 1, name: 'Bread Flour', percentage: 100 }
+];
+
+const initialIngredients: Ingredient[] = [
+  { id: 101, name: 'Water', percentage: 75 },
+  { id: 102, name: 'Levain', percentage: 20 },
+  { id: 103, name: 'Salt', percentage: 2 },
 ];
 
 interface RecipeCalculatorProps {
@@ -45,19 +37,16 @@ interface RecipeCalculatorProps {
 }
 
 const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBack }) => {
-  // Calculator State
+  // --- STATE ---
+  
+  // Batch Config
   const [numberOfLoaves, setNumberOfLoaves] = useState<number>(2);
   const [weightPerLoaf, setWeightPerLoaf] = useState<number>(900);
-  const [totalFlour, setTotalFlour] = useState<number>(0);
-  const [ingredients, setIngredients] = useState<Ingredient[]>(initialIngredientsList);
-  
-  // Scaling State
-  const [scalePercentage, setScalePercentage] = useState<string>('100');
   const [roundingMode, setRoundingMode] = useState<RoundingMode>('exact');
-  
-  // Base Flour State
-  const [baseFlourName, setBaseFlourName] = useState<string>('Bread Flour');
-  const [baseFlourCost, setBaseFlourCost] = useState<string>('');
+
+  // Recipe Composition
+  const [flours, setFlours] = useState<Ingredient[]>(initialFlours);
+  const [ingredients, setIngredients] = useState<Ingredient[]>(initialIngredients);
   
   // Saving/Loading State
   const [currentRecipeId, setCurrentRecipeId] = useState<string | null>(null);
@@ -65,10 +54,6 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   const [recipeName, setRecipeName] = useState<string>('');
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [expandedRecipeId, setExpandedRecipeId] = useState<string | null>(null);
-
-  // New Fields
-  const [instructions, setInstructions] = useState<string>('');
-  const [notes, setNotes] = useState<string>('');
 
   // Inventory State
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -78,7 +63,8 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
   const [aiSuggestion, setAiSuggestion] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
 
-  // Initialize with passed recipe if available
+  // --- INITIALIZATION ---
+
   useEffect(() => {
       if (initialRecipe) {
           setCurrentRecipeId(initialRecipe.id);
@@ -86,703 +72,548 @@ const RecipeCalculator: React.FC<RecipeCalculatorProps> = ({ initialRecipe, onBa
           setCurrentVersion(initialRecipe.version);
           setNumberOfLoaves(initialRecipe.numberOfLoaves);
           setWeightPerLoaf(initialRecipe.weightPerLoaf);
+          
+          // MIGRATION LOGIC: Check if it's an old recipe (no 'flours' array)
+          if (initialRecipe.flours && initialRecipe.flours.length > 0) {
+              setFlours(initialRecipe.flours);
+          } else {
+              // Convert legacy single-base flour to array
+              setFlours([{
+                  id: 1, 
+                  name: initialRecipe.baseFlourName || 'Bread Flour', 
+                  percentage: 100, 
+                  inventoryId: initialRecipe.baseFlourInventoryId,
+                  costPerKg: initialRecipe.baseFlourCostPerKg
+              }]);
+          }
           setIngredients(initialRecipe.ingredients);
-          setBaseFlourName(initialRecipe.baseFlourName || 'Bread Flour');
-          setBaseFlourCost(initialRecipe.baseFlourCostPerKg ? initialRecipe.baseFlourCostPerKg.toString() : '');
-          setInstructions(initialRecipe.instructions || '');
-          setNotes(initialRecipe.notes || '');
       } else {
-          // Reset if new
+          // Reset
           setCurrentRecipeId(null);
           setRecipeName('');
           setCurrentVersion(1);
           setNumberOfLoaves(2);
           setWeightPerLoaf(900);
-          setIngredients(initialIngredientsList.map(i => ({...i})));
-          setBaseFlourName('Bread Flour');
-          setBaseFlourCost('');
-          setInstructions('');
-          setNotes('');
+          setFlours(initialFlours.map(f => ({...f})));
+          setIngredients(initialIngredients.map(i => ({...i})));
       }
   }, [initialRecipe]);
 
-  const calculateRecipe = useCallback(() => {
-    // Replaced inline math with utility function
-    const newTotalFlour = calculateTotalFlour(numberOfLoaves, weightPerLoaf, ingredients);
-    setTotalFlour(newTotalFlour);
-  }, [numberOfLoaves, weightPerLoaf, ingredients]);
-
+  // Load Inventory & Saved Recipes
   useEffect(() => {
-    calculateRecipe();
-  }, [calculateRecipe]);
-
-  // Load recipes and inventory from storage on mount (for saving logic)
-  useEffect(() => {
-    const loadData = () => {
-        setSavedRecipes(storageService.getRecipes());
-        setInventory(storageService.getInventory());
-    };
-    loadData();
-    window.addEventListener('storage', loadData);
-    return () => window.removeEventListener('storage', loadData);
+    const saved = localStorage.getItem('sourdough_recipes');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setSavedRecipes(parsed);
+      } catch (e) { console.error(e); }
+    }
+    const invStr = localStorage.getItem('sourdough_inventory');
+    if (invStr) {
+        try {
+            setInventory(JSON.parse(invStr));
+        } catch (e) { console.error(e); }
+    }
   }, []);
 
-  const findInventoryMatch = (name: string) => {
-      return inventory.find(item => item.name.toLowerCase() === name.toLowerCase());
+  // --- CALCULATION LOGIC ---
+
+  // 1. Calculate Target Dough Weight
+  const totalTargetWeight = numberOfLoaves * weightPerLoaf;
+
+  // 2. Calculate Total Percentage Sum (Flours should sum to ~100%, Ingredients add on top)
+  // Note: We don't force flours to 100% in the math, but the UI implies it. 
+  // Baker's Math: Total % = Sum(Flour %) + Sum(Ing %)
+  // Usually Sum(Flour %) is exactly 100.
+  const totalFlourPercentage = flours.reduce((sum, f) => sum + (f.percentage || 0), 0);
+  const totalIngredientPercentage = ingredients.reduce((sum, i) => sum + (i.percentage || 0), 0);
+  const totalFormulaPercentage = totalFlourPercentage + totalIngredientPercentage;
+
+  // 3. Calculate Required Total Flour Weight (The "100%" mass)
+  // Total Dough = Total Flour * (Total Formula % / 100)
+  // Therefore: Total Flour = Total Dough / (Total Formula % / 100)
+  const totalFlourWeight = totalFormulaPercentage > 0 
+      ? totalTargetWeight / (totalFormulaPercentage / 100) 
+      : 0;
+
+  // Helper for Display Rounding
+  const getDisplayWeight = useCallback((weight: number): string => {
+      if (roundingMode === '1g') return Math.round(weight).toFixed(0);
+      if (roundingMode === '5g') return (Math.round(weight / 5) * 5).toFixed(0);
+      return weight.toFixed(1);
+  }, [roundingMode]);
+
+  // --- HANDLERS ---
+
+  // Scaling Handlers
+  const handleNumberOfLoavesChange = (val: string) => {
+      const n = parseFloat(val);
+      setNumberOfLoaves(isNaN(n) || n < 0 ? 0 : n);
   };
-
-  const handlePercentageChange = (id: number, value: string) => {
-    const newPercentage = parseFloat(value);
-    setIngredients(
-      ingredients.map((ing) =>
-        ing.id === id ? { ...ing, percentage: isNaN(newPercentage) ? 0 : newPercentage } : ing
-      )
-    );
+  const handleWeightPerLoafChange = (val: string) => {
+      const n = parseFloat(val);
+      setWeightPerLoaf(isNaN(n) || n < 0 ? 0 : n);
   };
-
-  const handleWeightChange = (id: number, value: string) => {
-      const targetWeight = parseFloat(value);
-      if (isNaN(targetWeight) || targetWeight < 0) return;
-
-      const totalDoughWeight = (numberOfLoaves || 0) * (weightPerLoaf || 0);
-      
-      if (totalDoughWeight - targetWeight <= 1) return; 
-
-      const otherIngredientsPercentageSum = ingredients.reduce((sum, ing) => {
-          if (ing.id === id) return sum;
-          return sum + (ing.percentage || 0) / 100;
-      }, 0);
-      
-      const s_other = 1 + otherIngredientsPercentageSum;
-      const newPercentageDecimal = (targetWeight * s_other) / (totalDoughWeight - targetWeight);
-      const newPercentage = newPercentageDecimal * 100;
-
-      setIngredients(ingredients.map(ing => 
-          ing.id === id ? { ...ing, percentage: newPercentage } : ing
-      ));
-  };
-
-  const handleBaseFlourWeightChange = (value: string) => {
-      const targetFlour = parseFloat(value);
-      if (isNaN(targetFlour) || targetFlour < 0) return;
-      
-      const totalPercentage = 1 + ingredients.reduce((sum, ing) => sum + (ing.percentage || 0) / 100, 0);
-      const newDoughWeight = targetFlour * totalPercentage;
-      
-      const count = numberOfLoaves || 1;
-      const newWeightPerLoaf = newDoughWeight / count;
-      
-      setWeightPerLoaf(parseFloat(newWeightPerLoaf.toFixed(1)));
-  };
-
-  const handleCostChange = (id: number, value: string) => {
-      const newCost = parseFloat(value);
-      setIngredients(
-        ingredients.map((ing) =>
-          ing.id === id ? { ...ing, costPerKg: isNaN(newCost) ? undefined : newCost } : ing
-        )
-      );
-  };
-
-  const handleNumberOfLoavesChange = (value: string) => {
-    const newCount = parseFloat(value);
-    setNumberOfLoaves(isNaN(newCount) ? 0 : newCount);
-  };
-
-  const handleWeightPerLoafChange = (value: string) => {
-    const newWeight = parseFloat(value);
-    setWeightPerLoaf(isNaN(newWeight) ? 0 : newWeight);
-  };
-  
-  const handleTotalWeightChange = (value: string) => {
-      const targetTotal = parseFloat(value);
-      if (!isNaN(targetTotal) && targetTotal >= 0 && weightPerLoaf > 0) {
-          // Adjust number of loaves to match target weight, keeping unit weight constant
-          setNumberOfLoaves(targetTotal / weightPerLoaf);
-      } else if (value === '') {
+  const handleTotalWeightChange = (val: string) => {
+      const target = parseFloat(val);
+      if (!isNaN(target) && target >= 0 && weightPerLoaf > 0) {
+          setNumberOfLoaves(target / weightPerLoaf);
+      } else if (val === '') {
           setNumberOfLoaves(0);
       }
   };
 
-  const addIngredient = () => {
-    const newId = ingredients.length > 0 ? Math.max(...ingredients.map(i => i.id)) + 1 : 1;
-    setIngredients([...ingredients, { id: newId, name: '', percentage: 0 }]);
-  }
-
-  const handleIngredientNameChange = (id: number, name: string) => {
-    const match = findInventoryMatch(name);
-    setIngredients(
-        ingredients.map((ing) =>
-          ing.id === id ? { 
-              ...ing, 
-              name, 
-              inventoryId: match ? match.id : undefined,
-          } : ing
-        )
-      );
-  }
-
-  const removeIngredient = (id: number) => {
-    setIngredients(ingredients.filter(ing => ing.id !== id));
-  }
-
-  const applyScaling = () => {
-      const factor = parseFloat(scalePercentage);
-      if (!isNaN(factor) && factor > 0) {
-          const multiplier = factor / 100;
-          const newLoaves = numberOfLoaves * multiplier;
-          setNumberOfLoaves(Math.round(newLoaves * 100) / 100);
-          setScalePercentage('100');
-      }
+  // Ingredient Handlers (Flours & Add-ins)
+  // type: 'flour' | 'ingredient'
+  const updateItem = (type: 'flour' | 'ingredient', id: number, field: keyof Ingredient, value: any) => {
+      const setter = type === 'flour' ? setFlours : setIngredients;
+      const list = type === 'flour' ? flours : ingredients;
+      
+      setter(list.map(item => {
+          if (item.id === id) {
+              // Special logic for name change to check inventory
+              if (field === 'name') {
+                   const match = findInventoryMatch(value);
+                   return { ...item, name: value, inventoryId: match?.id };
+              }
+              return { ...item, [field]: value };
+          }
+          return item;
+      }));
   };
 
-  const getDisplayWeight = (weight: number): string => {
-      if (roundingMode === '1g') {
-          return Math.round(weight).toFixed(0);
-      }
-      if (roundingMode === '5g') {
-          return (Math.round(weight / 5) * 5).toFixed(0);
-      }
-      return weight.toFixed(1);
+  const updatePercentage = (type: 'flour' | 'ingredient', id: number, valStr: string) => {
+      const val = parseFloat(valStr);
+      updateItem(type, id, 'percentage', isNaN(val) ? 0 : val);
   };
 
-  const handleGetSuggestion = async () => {
-      if (!aiGoal.trim()) return;
-      setIsAiLoading(true);
-      setAiSuggestion('');
-
-      const context = `
-      Base Flour: ${baseFlourName} (100%)
-      Hydration: ${ingredients.find(i => i.name.toLowerCase() === 'water')?.percentage || 'Unknown'}%
-      Ingredients:
-      ${ingredients.map(i => `- ${i.name}: ${i.percentage}%`).join('\n')}
-      `;
-
-      try {
-        const result = await getRecipeSuggestions(context, aiGoal);
-        setAiSuggestion(result);
-      } catch (e) {
-          console.error(e);
-          setAiSuggestion("Could not get suggestions.");
-      }
-      setIsAiLoading(false);
+  const updateCost = (type: 'flour' | 'ingredient', id: number, valStr: string) => {
+      const val = parseFloat(valStr);
+      updateItem(type, id, 'costPerKg', isNaN(val) ? undefined : val);
   };
 
-  const handleSaveRecipe = () => {
-    if (!recipeName.trim()) {
-      alert('Please enter a recipe name to save.');
-      return;
-    }
+  // REVERSE CALCULATION: Weight -> Percentage
+  const handleWeightOverride = (type: 'flour' | 'ingredient', id: number, valStr: string) => {
+      const targetWeight = parseFloat(valStr);
+      if (isNaN(targetWeight) || targetWeight < 0) return;
 
-    const baseFlourMatch = findInventoryMatch(baseFlourName);
+      // Current state
+      const currentFlours = [...flours];
+      const currentIngs = [...ingredients];
 
-    const currentData: RecipeSnapshot = {
-      numberOfLoaves,
-      weightPerLoaf,
-      ingredients,
-      date: new Date().toLocaleDateString(),
-      version: currentVersion,
-      baseFlourName,
-      baseFlourInventoryId: baseFlourMatch?.id,
-      baseFlourCostPerKg: parseFloat(baseFlourCost) || 0,
-      instructions,
-      notes
-    };
-
-    if (currentRecipeId) {
-        // Update existing logic
-        const existingRecipe = savedRecipes.find(r => r.id === currentRecipeId);
-        if (existingRecipe) {
-            const historyItem: RecipeSnapshot = {
-                numberOfLoaves: existingRecipe.numberOfLoaves,
-                weightPerLoaf: existingRecipe.weightPerLoaf,
-                ingredients: existingRecipe.ingredients,
-                date: existingRecipe.date,
-                version: existingRecipe.version,
-                baseFlourName: existingRecipe.baseFlourName,
-                baseFlourInventoryId: existingRecipe.baseFlourInventoryId,
-                baseFlourCostPerKg: existingRecipe.baseFlourCostPerKg,
-                instructions: existingRecipe.instructions,
-                notes: existingRecipe.notes
-            };
-
-            const updated: SavedRecipe = {
-                ...existingRecipe,
-                ...currentData,
-                name: recipeName,
-                version: existingRecipe.version + 1,
-                history: [historyItem, ...existingRecipe.history]
-            };
-
-            storageService.addOrUpdateRecipe(updated);
-            setSavedRecipes(storageService.getRecipes());
-            setCurrentVersion(updated.version);
-            alert(`Recipe updated to Version ${updated.version}!`);
-        }
-    } else {
-        // New Recipe
-        const newRecipe: SavedRecipe = {
-          id: Date.now().toString(),
-          name: recipeName,
-          ...currentData,
-          version: 1,
-          history: []
-        };
-        storageService.addOrUpdateRecipe(newRecipe);
-        setSavedRecipes(storageService.getRecipes());
-        setCurrentRecipeId(newRecipe.id);
-        setCurrentVersion(1);
-        alert('Recipe saved successfully!');
-    }
+      // To change one item's weight while keeping Total Dough Weight constant,
+      // we essentially have to change its percentage.
+      // New % = (Target Weight / Total Flour Weight) * 100
+      
+      // However, changing a FLOUR's weight changes the Total Flour Weight reference if we aren't careful.
+      // Strategy: 
+      // 1. Calculate the implied Total Flour Weight if this item were X grams.
+      // This is tricky because Total Flour Weight depends on the sum of Percentages.
+      
+      // Simpler Strategy:
+      // Assume Total Flour Weight (Calculated from Batch Specs) is the source of truth for the DENOMINATOR.
+      // We just update the percentage to match the target weight relative to the CURRENT Total Flour Weight.
+      // This might slightly shift the total batch weight if the user isn't careful, but it's the most intuitive for "tweaking".
+      
+      if (totalFlourWeight <= 0) return;
+      
+      const newPct = (targetWeight / totalFlourWeight) * 100;
+      updateItem(type, id, 'percentage', parseFloat(newPct.toFixed(2))); // limit precision to avoid infinite floats
   };
 
-  const handleSaveAsNew = () => {
-    if (!recipeName.trim()) {
-        alert('Please enter a recipe name to save.');
-        return;
-    }
-
-    const baseFlourMatch = findInventoryMatch(baseFlourName);
-
-    const newRecipe: SavedRecipe = {
-        id: Date.now().toString(),
-        name: recipeName + ' (Copy)',
-        numberOfLoaves,
-        weightPerLoaf,
-        ingredients,
-        date: new Date().toLocaleDateString(),
-        version: 1,
-        history: [],
-        baseFlourName,
-        baseFlourInventoryId: baseFlourMatch?.id,
-        baseFlourCostPerKg: parseFloat(baseFlourCost) || 0,
-        instructions,
-        notes
-    };
-
-    storageService.addOrUpdateRecipe(newRecipe);
-    setSavedRecipes(storageService.getRecipes());
-    
-    setCurrentRecipeId(newRecipe.id);
-    setRecipeName(newRecipe.name);
-    setCurrentVersion(1);
-    alert('Recipe saved as new copy!');
+  const addItem = (type: 'flour' | 'ingredient') => {
+      const list = type === 'flour' ? flours : ingredients;
+      const setter = type === 'flour' ? setFlours : setIngredients;
+      const maxId = Math.max(...flours.map(i=>i.id), ...ingredients.map(i=>i.id), 0);
+      setter([...list, { id: maxId + 1, name: '', percentage: 0 }]);
   };
 
-  const handleLoadVersion = (recipe: SavedRecipe, snapshot: RecipeSnapshot) => {
-      if (window.confirm(`Revert to Version ${snapshot.version} from ${snapshot.date}? Unsaved changes will be lost.`)) {
-          // This keeps the recipe ID but resets the data to the snapshot
-          setCurrentVersion(snapshot.version);
-          setNumberOfLoaves(snapshot.numberOfLoaves);
-          setWeightPerLoaf(snapshot.weightPerLoaf);
-          setIngredients(snapshot.ingredients);
-          setBaseFlourName(snapshot.baseFlourName || 'Bread Flour');
-          setBaseFlourCost(snapshot.baseFlourCostPerKg ? snapshot.baseFlourCostPerKg.toString() : '');
-          setInstructions(snapshot.instructions || '');
-          setNotes(snapshot.notes || '');
-      }
+  const removeItem = (type: 'flour' | 'ingredient', id: number) => {
+      const list = type === 'flour' ? flours : ingredients;
+      const setter = type === 'flour' ? setFlours : setIngredients;
+      setter(list.filter(i => i.id !== id));
   };
 
-  const toggleHistory = () => {
-      if (currentRecipeId) {
-          setExpandedRecipeId(expandedRecipeId === currentRecipeId ? null : currentRecipeId);
-      }
-  }
+  // --- HELPERS ---
   
-  const currentRecipeObject = savedRecipes.find(r => r.id === currentRecipeId);
-  const currentTotalWeight = (numberOfLoaves || 0) * (weightPerLoaf || 0);
+  const findInventoryMatch = (name: string) => {
+      if (!name) return undefined;
+      return inventory.find(item => item.name.toLowerCase().trim() === name.toLowerCase().trim());
+  };
+
+  // Filter Common lists based on inventory
+  const filteredCommonFlours = useMemo(() => COMMON_FLOURS.filter(c => !inventory.some(i => i.name.toLowerCase() === c.toLowerCase())), [inventory]);
+  const filteredCommonAddins = useMemo(() => COMMON_ADDINS.filter(c => !inventory.some(i => i.name.toLowerCase() === c.toLowerCase())), [inventory]);
+
+  // AI & Saving (Similar to previous implementation, adapted for new structure)
+  const handleGetSuggestion = async () => {
+    if (!aiGoal.trim()) return;
+    setIsAiLoading(true);
+    setAiSuggestion('');
+
+    const context = `
+    Flour Blend:
+    ${flours.map(f => `- ${f.name}: ${f.percentage}%`).join('\n')}
+    
+    Add-ins:
+    ${ingredients.map(i => `- ${i.name}: ${i.percentage}%`).join('\n')}
+    
+    Total Hydration: ${ingredients.find(i => i.name.toLowerCase().includes('water'))?.percentage || '?'}%
+    `;
+
+    const result = await getRecipeSuggestions(context, aiGoal);
+    setAiSuggestion(result);
+    setIsAiLoading(false);
+  };
+
+  const handleSaveRecipe = (asNew: boolean = false) => {
+      if (!recipeName.trim()) { alert('Please enter a name'); return; }
+
+      // Snapshot
+      const snapshot: RecipeSnapshot = {
+          numberOfLoaves,
+          weightPerLoaf,
+          flours,
+          ingredients,
+          date: new Date().toLocaleDateString(),
+          version: asNew || !currentRecipeId ? 1 : currentVersion + 1,
+          // Legacy support (optional, can leave empty)
+          baseFlourName: flours[0]?.name,
+      };
+
+      let newHistory: RecipeSnapshot[] = [];
+      let newId = currentRecipeId;
+      
+      if (currentRecipeId && !asNew) {
+          // Updating
+          const existing = savedRecipes.find(r => r.id === currentRecipeId);
+          if (existing) {
+             newHistory = [
+                 { ...existing, flours: existing.flours || [], ingredients: existing.ingredients }, // ensure structure
+                 ...existing.history
+             ];
+          }
+      } else {
+          // New
+          newId = Date.now().toString();
+      }
+
+      const finalRecipe: SavedRecipe = {
+          id: newId!,
+          name: asNew ? `${recipeName} (Copy)` : recipeName,
+          ...snapshot,
+          history: newHistory
+      };
+
+      let updatedList = savedRecipes;
+      if (currentRecipeId && !asNew) {
+          updatedList = savedRecipes.map(r => r.id === currentRecipeId ? finalRecipe : r);
+          alert(`Updated to v${finalRecipe.version}`);
+      } else {
+          updatedList = [...savedRecipes, finalRecipe];
+          alert('Recipe saved!');
+      }
+
+      setSavedRecipes(updatedList);
+      localStorage.setItem('sourdough_recipes', JSON.stringify(updatedList));
+      setCurrentRecipeId(finalRecipe.id);
+      setCurrentVersion(finalRecipe.version);
+      if (asNew) setRecipeName(finalRecipe.name);
+  };
+
+  const handleLoadVersion = (snap: RecipeSnapshot) => {
+       if (confirm('Revert? Unsaved changes lost.')) {
+           setNumberOfLoaves(snap.numberOfLoaves);
+           setWeightPerLoaf(snap.weightPerLoaf);
+           setFlours(snap.flours || []); // Handle legacy where flours might be undefined
+           setIngredients(snap.ingredients);
+           setCurrentVersion(snap.version);
+       }
+  };
+
+  // --- RENDER HELPERS ---
+
+  const renderRow = (item: Ingredient, type: 'flour' | 'ingredient') => {
+      const weight = (totalFlourWeight * item.percentage) / 100;
+      const isLinked = !!item.inventoryId || !!findInventoryMatch(item.name);
+      
+      return (
+        <tr key={item.id} className="group hover:bg-stone-50 transition-colors">
+            {/* NAME INPUT */}
+            <td className="px-4 py-2">
+                <div className="flex gap-2 items-center">
+                    <select
+                        className="block w-1/3 border-stone-200 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 text-xs py-1.5"
+                        value={findInventoryMatch(item.name) ? item.name : ((type === 'flour' ? COMMON_FLOURS : COMMON_ADDINS).includes(item.name) ? item.name : "")}
+                        onChange={(e) => e.target.value && updateItem(type, item.id, 'name', e.target.value)}
+                    >
+                        <option value="">Select...</option>
+                        {inventory.length > 0 && (
+                            <optgroup label="Inventory">
+                                {inventory.map(inv => <option key={inv.id} value={inv.name}>{inv.name}</option>)}
+                            </optgroup>
+                        )}
+                        <optgroup label="Common">
+                            {(type === 'flour' ? filteredCommonFlours : filteredCommonAddins).map(c => (
+                                <option key={c} value={c}>{c}</option>
+                            ))}
+                        </optgroup>
+                    </select>
+                    <div className="relative w-2/3">
+                        <input
+                            type="text"
+                            value={item.name}
+                            onChange={(e) => updateItem(type, item.id, 'name', e.target.value)}
+                            className={`block w-full border-stone-200 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 text-sm py-1.5 ${isLinked ? 'pr-7' : ''}`}
+                            placeholder={type === 'flour' ? "Flour Type" : "Ingredient"}
+                        />
+                        {isLinked && (
+                            <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
+                                <BoxIcon className="w-3.5 h-3.5 text-amber-600" title="Linked to Inventory" />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </td>
+            {/* PERCENTAGE INPUT */}
+            <td className="px-4 py-2">
+                <div className="relative rounded-md shadow-sm w-20 ml-auto">
+                    <input
+                        type="number"
+                        step="0.1"
+                        value={item.percentage}
+                        onChange={(e) => updatePercentage(type, item.id, e.target.value)}
+                        className="block w-full text-right border-stone-200 rounded-md focus:ring-amber-500 focus:border-amber-500 text-sm py-1.5 pr-6"
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-stone-400 text-xs">%</div>
+                </div>
+            </td>
+            {/* WEIGHT INPUT (Calculated / Override) */}
+            <td className="px-4 py-2">
+                <div className="relative rounded-md shadow-sm w-24 ml-auto">
+                    <input
+                        type="number"
+                        value={getDisplayWeight(weight)}
+                        onChange={(e) => handleWeightOverride(type, item.id, e.target.value)}
+                        className="block w-full text-right border-stone-200 rounded-md focus:ring-amber-500 focus:border-amber-500 text-sm py-1.5 pr-6 font-medium text-stone-700"
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-stone-400 text-xs">g</div>
+                </div>
+            </td>
+            {/* DELETE */}
+            <td className="px-4 py-2 text-right">
+                <button 
+                    onClick={() => removeItem(type, item.id)}
+                    className="text-stone-300 hover:text-red-500 transition-colors p-1"
+                >
+                    &times;
+                </button>
+            </td>
+        </tr>
+      );
+  };
 
   return (
-    <div className="animate-fade-in pb-12">
-      {/* Back Navigation */}
-      <button 
-        onClick={onBack}
-        className="mb-4 flex items-center text-stone-500 hover:text-stone-800 transition-colors font-medium text-sm"
-      >
-          &larr; Back to Library
-      </button>
-
-      <datalist id="all-ingredients-list">
-        {inventory.map(item => (
-            <option key={`inv-${item.id}`} value={item.name} />
-        ))}
-        {COMMON_INGREDIENTS.filter(c => !inventory.find(i => i.name.toLowerCase() === c.toLowerCase())).map((opt) => (
-          <option key={`common-${opt}`} value={opt} />
-        ))}
-      </datalist>
-
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-stone-800 mb-1">
-             {recipeName || "New Recipe"}
-          </h2>
-          <div className="flex items-center gap-2 text-sm text-stone-500">
-             <span>{currentRecipeId ? `Version ${currentVersion}` : 'Unsaved Draft'}</span>
-             {currentRecipeObject && currentRecipeObject.history.length > 0 && (
-                 <>
-                    <span>&bull;</span>
-                    <button onClick={toggleHistory} className="text-amber-600 hover:underline">
-                        {expandedRecipeId ? 'Hide History' : 'View History'}
-                    </button>
-                 </>
-             )}
-          </div>
+    <div className="animate-fade-in pb-20">
+      {/* --- HEADER & CONFIG --- */}
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={onBack} className="text-stone-500 hover:text-stone-800 text-sm font-medium flex items-center gap-1">
+            &larr; Back
+        </button>
+        <div className="flex gap-2">
+             <button onClick={() => setExpandedRecipeId(expandedRecipeId ? null : 'open')} className="text-amber-600 text-xs font-medium">
+                 {currentRecipeId ? `v${currentVersion}` : 'Draft'} History
+             </button>
         </div>
       </div>
 
        {/* Inline History Drawer */}
-       {expandedRecipeId && currentRecipeObject && (
+       {expandedRecipeId && currentRecipeId && (
             <div className="bg-stone-50 border border-stone-200 rounded-lg p-4 mb-6 animate-fade-in">
                 <p className="text-xs font-semibold text-stone-500 mb-2 uppercase tracking-wide">Version History</p>
                 <ul className="space-y-2 max-h-40 overflow-y-auto">
-                    {currentRecipeObject.history.map((snap, idx) => (
+                    {savedRecipes.find(r => r.id === currentRecipeId)?.history.map((snap, idx) => (
                         <li key={idx} className="flex items-center justify-between text-xs bg-white p-2 rounded border border-stone-200 shadow-sm">
-                            <div>
-                                <span className="font-medium text-stone-700">v{snap.version}</span>
-                                <span className="mx-2 text-stone-300">|</span>
-                                <span className="text-stone-500">{snap.date}</span>
-                                <span className="mx-2 text-stone-300">|</span>
-                                <span className="text-stone-500">{snap.numberOfLoaves} x {snap.weightPerLoaf}g</span>
-                            </div>
-                            <button 
-                                onClick={() => handleLoadVersion(currentRecipeObject, snap)}
-                                className="text-amber-600 hover:text-amber-800 font-medium hover:underline"
-                            >
-                                Restore
-                            </button>
+                            <span>v{snap.version} • {snap.date}</span>
+                            <button onClick={() => handleLoadVersion(snap)} className="text-amber-600 hover:underline">Restore</button>
                         </li>
                     ))}
                 </ul>
             </div>
         )}
 
-      <Tabs tabs={['Formula', 'Method & Notes', 'Cost & AI']}>
-        {/* Tab 1: Formula */}
-        <div>
-             {/* Unified Batch Configuration Panel */}
-            <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm mb-8">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-                    <div>
-                        <h3 className="text-lg font-bold text-stone-800">Batch Configuration</h3>
-                    </div>
-
-                    {/* Rounding Select */}
-                    <div className="flex items-center gap-2 bg-stone-50 px-3 py-1.5 rounded-lg border border-stone-200">
-                        <label htmlFor="rounding" className="text-xs font-medium text-stone-600 uppercase tracking-wide">Rounding</label>
-                        <select
-                            id="rounding"
-                            value={roundingMode}
-                            onChange={(e) => setRoundingMode(e.target.value as RoundingMode)}
-                            className="bg-transparent border-none text-sm font-medium text-stone-800 focus:ring-0 cursor-pointer pl-0 pr-8 py-0"
-                        >
-                            <option value="exact">Exact (0.1g)</option>
-                            <option value="1g">Nearest 1g/ml</option>
-                            <option value="5g">Nearest 5g/ml</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div>
-                        <label className="block text-sm font-medium text-stone-700 mb-1">Number of Loaves</label>
-                        <input
-                            type="number"
-                            step="0.5"
-                            value={numberOfLoaves}
-                            onChange={(e) => handleNumberOfLoavesChange(e.target.value)}
-                            className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
-                            placeholder="2"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-stone-700 mb-1">Weight per Loaf (g)</label>
-                        <input
-                            type="number"
-                            step="10"
-                            value={weightPerLoaf}
-                            onChange={(e) => handleWeightPerLoafChange(e.target.value)}
-                            className="block w-full px-4 py-2 bg-white border border-stone-300 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg"
-                            placeholder="900"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-stone-700 mb-1">Total Batch Weight (g)</label>
-                        <input
-                            type="number"
-                            step="10"
-                            value={Math.round(currentTotalWeight)}
-                            onChange={(e) => handleTotalWeightChange(e.target.value)}
-                            className="block w-full px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg shadow-sm focus:ring-amber-500 focus:border-amber-500 text-lg text-amber-900 font-semibold"
-                            placeholder="e.g. 5000"
-                        />
-                    </div>
-                </div>
-
-                {/* Quick Scale Utility */}
-                <div className="mt-6 pt-6 border-t border-stone-100">
-                    <h4 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-3">Quick Actions</h4>
-                    <div className="flex flex-col sm:flex-row gap-4">
-                        <div className="flex items-center gap-2">
-                            <span className="text-sm text-stone-600">Scale by:</span>
-                            <input
-                                type="number"
-                                value={scalePercentage}
-                                onChange={(e) => setScalePercentage(e.target.value)}
-                                className="w-20 px-3 py-1.5 text-sm border border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500"
-                                placeholder="100"
-                            />
-                            <span className="text-sm text-stone-500">%</span>
-                            <button
-                                onClick={applyScaling}
-                                className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded-md text-sm font-medium hover:bg-stone-200 border border-stone-200"
-                            >
-                                Apply
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            {/* Ingredients Table */}
-            <div className="overflow-x-auto mb-6 shadow-sm rounded-lg border border-stone-200">
-                <table className="min-w-full divide-y divide-stone-200">
-                <thead className="bg-stone-50">
-                    <tr>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider w-1/3">Ingredient</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Baker's %</th>
-                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Weight (g)</th>
-                    <th scope="col" className="relative px-6 py-3"><span className="sr-only">Remove</span></th>
-                    </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-stone-200">
-                    <tr className="bg-stone-50 font-semibold">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
-                        <div className="flex flex-col">
-                            <span className="text-xs text-stone-500 mb-1">Total Flour Base (100%)</span>
-                            <div className="flex gap-2">
-                                <select
-                                    className="block w-1/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-xs"
-                                    value={COMMON_INGREDIENTS.includes(baseFlourName) ? baseFlourName : ""}
-                                    onChange={(e) => e.target.value && setBaseFlourName(e.target.value)}
-                                >
-                                    <option value="">Quick Select...</option>
-                                    {COMMON_INGREDIENTS.map(c => <option key={`bf-${c}`} value={c}>{c}</option>)}
-                                </select>
-                                <input
-                                    type="text"
-                                    list="all-ingredients-list"
-                                    value={baseFlourName}
-                                    onChange={(e) => setBaseFlourName(e.target.value)}
-                                    className="block w-2/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-sm font-normal"
-                                    placeholder="Type name..."
-                                />
-                            </div>
-                        </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500">100%</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
-                        <div className="relative rounded-md shadow-sm w-28">
-                                <input
-                                    type="number"
-                                    step="any"
-                                    value={getDisplayWeight(totalFlour)}
-                                    onChange={(e) => handleBaseFlourWeightChange(e.target.value)}
-                                    className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6 text-right"
-                                />
-                                <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
-                                <span className="text-stone-400 sm:text-sm">g</span>
-                                </div>
-                            </div>
-                    </td>
-                    <td></td>
-                    </tr>
-                    {ingredients.map((ing) => (
-                        <tr key={ing.id}>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex gap-2">
-                                <select
-                                    className="block w-1/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-xs"
-                                    value={COMMON_INGREDIENTS.includes(ing.name) ? ing.name : ""}
-                                    onChange={(e) => e.target.value && handleIngredientNameChange(ing.id, e.target.value)}
-                                >
-                                    <option value="">Quick Select...</option>
-                                    {COMMON_INGREDIENTS.map(c => <option key={`ing-${ing.id}-${c}`} value={c}>{c}</option>)}
-                                </select>
-                                <input
-                                type="text"
-                                list="all-ingredients-list"
-                                value={ing.name}
-                                onChange={(e) => handleIngredientNameChange(ing.id, e.target.value)}
-                                className="block w-2/3 border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
-                                placeholder="Type custom name..."
-                                />
-                            </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="relative rounded-md shadow-sm w-24">
-                                <input
-                                    type="number"
-                                    value={ing.percentage}
-                                    onChange={(e) => handlePercentageChange(ing.id, e.target.value)}
-                                    className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6"
-                                />
-                                <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
-                                    <span className="text-stone-400 sm:text-sm">%</span>
-                                </div>
-                            </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500">
-                            <div className="relative rounded-md shadow-sm w-28">
-                                <input
-                                    type="number"
-                                    step="any"
-                                    value={getDisplayWeight(calculateIngredientWeight(totalFlour, ing.percentage))}
-                                    onChange={(e) => handleWeightChange(ing.id, e.target.value)}
-                                    className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-sm border-stone-300 rounded-md pr-6 text-right"
-                                />
-                                <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
-                                    <span className="text-stone-400 sm:text-sm">g</span>
-                                </div>
-                            </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                            <button onClick={() => removeIngredient(ing.id)} className="text-red-600 hover:text-red-900">Remove</button>
-                        </td>
-                        </tr>
-                    ))}
-                    <tr className="bg-stone-100 font-medium border-t-2 border-stone-200">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-800">Total Batch</td>
-                        <td className="px-6 py-4"></td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-800 text-right pr-12">
-                            {(
-                                parseFloat(getDisplayWeight(totalFlour)) +
-                                ingredients.reduce((sum, ing) => sum + parseFloat(getDisplayWeight((totalFlour * ing.percentage) / 100)), 0)
-                            ).toFixed(roundingMode === 'exact' ? 1 : 0)} g
-                        </td>
-                        <td></td>
-                    </tr>
-                </tbody>
-                </table>
-            </div>
-            
-            <div className="flex justify-between items-center mb-8">
-                <button onClick={addIngredient} className="text-amber-700 hover:text-amber-900 font-medium text-sm flex items-center">
-                    <span className="text-lg mr-1">+</span> Add Ingredient
-                </button>
-            </div>
-        </div>
-
-        {/* Tab 2: Method & Notes */}
-        <div className="space-y-6">
-            <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm">
-                <label className="block text-lg font-bold text-stone-800 mb-2">Instructions / Method</label>
-                <p className="text-sm text-stone-500 mb-4">Detailed steps for preparing and baking.</p>
-                <textarea
-                    value={instructions}
-                    onChange={(e) => setInstructions(e.target.value)}
-                    className="block w-full px-4 py-3 border border-stone-300 rounded-lg text-sm focus:ring-amber-500 focus:border-amber-500 h-64 font-mono leading-relaxed"
-                    placeholder="1. Autolyse..."
+      {/* BATCH CONFIG PANEL */}
+      <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm mb-6 grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
+          <div className="md:col-span-1">
+              <label className="block text-xs font-bold text-stone-500 uppercase tracking-wide mb-1">Loaves</label>
+              <input 
+                 type="number" step="1" 
+                 value={numberOfLoaves} onChange={e => handleNumberOfLoavesChange(e.target.value)}
+                 className="w-full text-lg font-medium border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500"
+              />
+          </div>
+          <div className="md:col-span-1">
+              <label className="block text-xs font-bold text-stone-500 uppercase tracking-wide mb-1">Weight / Loaf</label>
+              <div className="relative">
+                <input 
+                    type="number" step="10" 
+                    value={weightPerLoaf} onChange={e => handleWeightPerLoafChange(e.target.value)}
+                    className="w-full text-lg font-medium border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500 pr-8"
                 />
-            </div>
-             <div className="bg-white p-6 rounded-xl border border-stone-200 shadow-sm">
-                <label className="block text-lg font-bold text-stone-800 mb-2">Recipe Notes</label>
-                <p className="text-sm text-stone-500 mb-4">Observations, temperature log, or tasting notes.</p>
-                <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="block w-full px-4 py-3 border border-stone-300 rounded-lg text-sm focus:ring-amber-500 focus:border-amber-500 h-32"
-                    placeholder="Room temp was 24C..."
+                <span className="absolute right-3 top-3 text-stone-400 text-sm">g</span>
+              </div>
+          </div>
+          <div className="md:col-span-1">
+              <label className="block text-xs font-bold text-amber-600 uppercase tracking-wide mb-1">Total Batch</label>
+              <div className="relative">
+                <input 
+                    type="number" step="10" 
+                    value={Math.round(totalTargetWeight)} onChange={e => handleTotalWeightChange(e.target.value)}
+                    className="w-full text-lg font-bold text-amber-800 bg-amber-50 border-amber-200 rounded-md focus:ring-amber-500 focus:border-amber-500 pr-8"
                 />
-            </div>
-        </div>
-
-        {/* Tab 3: Cost & AI */}
-        <div>
-             {/* AI Recipe Assistant Section */}
-            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-xl border border-indigo-100 shadow-sm mb-8">
-                    <div className="flex items-center gap-2 mb-4">
-                        <SparklesIcon className="w-6 h-6 text-indigo-600" />
-                        <h3 className="text-lg font-bold text-indigo-900">AI Recipe Developer</h3>
-                    </div>
-                    <p className="text-sm text-indigo-700 mb-4">
-                        Want to tweak this recipe? Tell the AI your goal (e.g., "Make the crumb more open," "Add a nutty flavor," "Increase sourness") and get scientific suggestions.
-                    </p>
-
-                    <div className="flex gap-3 mb-4">
-                        <input
-                            type="text"
-                            value={aiGoal}
-                            onChange={(e) => setAiGoal(e.target.value)}
-                            placeholder="Describe your goal..."
-                            className="flex-grow px-4 py-2 border border-indigo-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                            onKeyDown={(e) => e.key === 'Enter' && handleGetSuggestion()}
-                        />
-                        <button
-                            onClick={handleGetSuggestion}
-                            disabled={isAiLoading || !aiGoal.trim()}
-                            className="px-6 py-2 bg-indigo-600 text-white rounded-md font-medium text-sm hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
-                        >
-                            {isAiLoading ? <Spinner /> : 'Get Suggestions'}
-                        </button>
-                    </div>
-
-                    {aiSuggestion && (
-                        <div className="bg-white p-5 rounded-lg border border-indigo-100 shadow-sm animate-fade-in">
-                            <h4 className="font-semibold text-indigo-900 mb-2 text-sm uppercase tracking-wide">AI Suggestions</h4>
-                            <div className="prose prose-sm prose-indigo max-w-none" dangerouslySetInnerHTML={{ __html: aiSuggestion.replace(/\n/g, '<br />') }} />
-                        </div>
-                    )}
-            </div>
-
-            <RecipeCost
-                ingredients={ingredients}
-                totalFlour={totalFlour}
-                numberOfLoaves={numberOfLoaves}
-                baseFlourName={baseFlourName}
-                baseFlourCost={baseFlourCost}
-                onUpdateBaseFlourCost={setBaseFlourCost}
-                onUpdateIngredientCost={handleCostChange}
-                inventory={inventory}
-            />
-        </div>
-      </Tabs>
-      
-      <div className="mb-8"></div>
-
-      {/* Saving Action Bar */}
-      <div className="sticky bottom-4 bg-white/95 backdrop-blur shadow-xl border border-stone-200 p-4 rounded-lg flex flex-col sm:flex-row gap-4 items-end sm:items-center">
-        <div className="w-full flex-grow">
-            <label htmlFor="recipe-name" className="block text-xs font-medium text-stone-500 uppercase tracking-wide mb-1">
-                Recipe Name
-            </label>
-            <input 
-                type="text" 
-                id="recipe-name"
-                value={recipeName}
-                onChange={(e) => setRecipeName(e.target.value)}
-                placeholder="e.g., Sunday Morning Sourdough"
-                className="block w-full px-3 py-2 bg-white border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
-            />
-        </div>
-        <div className="flex gap-2 w-full sm:w-auto">
-            {currentRecipeId && (
-                <button 
-                    onClick={handleSaveAsNew}
-                    className="flex-1 sm:flex-none px-4 py-2 bg-white border border-amber-300 text-amber-700 rounded-md hover:bg-amber-50 font-medium text-sm shadow-sm whitespace-nowrap h-[38px]"
-                >
-                    Save as Copy
-                </button>
-            )}
-            <button 
-                onClick={handleSaveRecipe}
-                className="flex-1 sm:flex-none px-6 py-2 bg-amber-600 border border-transparent rounded-md shadow-sm text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 font-medium text-sm h-[38px]"
-            >
-                {currentRecipeId ? 'Update Recipe' : 'Save New Recipe'}
-            </button>
-        </div>
+                <span className="absolute right-3 top-3 text-amber-400 text-sm">g</span>
+              </div>
+          </div>
+          <div className="md:col-span-1 flex justify-end">
+              <select 
+                  value={roundingMode} onChange={e => setRoundingMode(e.target.value as any)}
+                  className="text-xs border-stone-200 rounded-md text-stone-500"
+              >
+                  <option value="exact">Exact Weights</option>
+                  <option value="1g">Round to 1g</option>
+                  <option value="5g">Round to 5g</option>
+              </select>
+          </div>
       </div>
+
+      {/* --- FORMULA EDITOR --- */}
+      
+      <div className="bg-white rounded-xl shadow-sm border border-stone-200 overflow-hidden mb-8">
+          {/* FLOUR SECTION */}
+          <div className="border-b border-stone-100">
+              <div className="bg-stone-50 px-6 py-3 border-b border-stone-200 flex justify-between items-center">
+                  <h3 className="font-bold text-stone-800 text-sm uppercase tracking-wide">Flour Blend (100%)</h3>
+                  <div className={`text-sm font-bold ${Math.abs(totalFlourPercentage - 100) > 0.1 ? 'text-amber-600' : 'text-green-600'}`}>
+                      {totalFlourPercentage.toFixed(1)}% Total
+                  </div>
+              </div>
+              <table className="min-w-full divide-y divide-stone-100">
+                  <thead className="bg-white">
+                      <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-stone-400 uppercase w-1/2">Flour Type</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-stone-400 uppercase">Percent</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-stone-400 uppercase">Weight</th>
+                          <th className="w-10"></th>
+                      </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-50">
+                      {flours.map(f => renderRow(f, 'flour'))}
+                      <tr>
+                          <td colSpan={4} className="px-4 py-2">
+                              <button onClick={() => addItem('flour')} className="text-xs font-medium text-amber-600 hover:text-amber-800 flex items-center gap-1">
+                                  + Add Flour
+                              </button>
+                          </td>
+                      </tr>
+                      {/* Subtotal Row for Flours */}
+                      <tr className="bg-stone-50 font-medium text-stone-600 border-t border-stone-200">
+                           <td className="px-4 py-2 text-sm text-right">Total Flour Base:</td>
+                           <td className="px-4 py-2 text-right text-xs">{totalFlourPercentage.toFixed(1)}%</td>
+                           <td className="px-4 py-2 text-right text-sm">{getDisplayWeight(totalFlourWeight)} g</td>
+                           <td></td>
+                      </tr>
+                  </tbody>
+              </table>
+          </div>
+
+          {/* INGREDIENTS SECTION */}
+          <div>
+              <div className="bg-stone-50 px-6 py-3 border-b border-stone-200 border-t border-stone-100 flex justify-between items-center">
+                  <h3 className="font-bold text-stone-800 text-sm uppercase tracking-wide">Add-ins & Hydration</h3>
+                  <span className="text-xs text-stone-400">Values relative to Total Flour Weight</span>
+              </div>
+              <table className="min-w-full divide-y divide-stone-100">
+                  <tbody className="divide-y divide-stone-50">
+                      {ingredients.map(i => renderRow(i, 'ingredient'))}
+                      <tr>
+                          <td colSpan={4} className="px-4 py-2">
+                              <button onClick={() => addItem('ingredient')} className="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                                  + Add Ingredient
+                              </button>
+                          </td>
+                      </tr>
+                  </tbody>
+              </table>
+          </div>
+      </div>
+
+      {/* --- AI & COST --- */}
+      
+      {/* AI Assistant */}
+      <div className="bg-gradient-to-r from-indigo-50 to-white p-5 rounded-xl border border-indigo-100 mb-8">
+          <div className="flex items-center gap-2 mb-3">
+              <SparklesIcon className="w-5 h-5 text-indigo-500" />
+              <h4 className="font-bold text-indigo-900 text-sm">AI Baker's Assistant</h4>
+          </div>
+          <div className="flex gap-2">
+              <input 
+                type="text" 
+                value={aiGoal} onChange={e => setAiGoal(e.target.value)}
+                placeholder="e.g. Add 20% Spelt without losing structure..." 
+                className="flex-grow text-sm border-indigo-200 rounded-md focus:ring-indigo-500"
+              />
+              <button 
+                onClick={handleGetSuggestion} disabled={isAiLoading || !aiGoal}
+                className="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+              >
+                  {isAiLoading ? <Spinner /> : 'Ask AI'}
+              </button>
+          </div>
+          {aiSuggestion && (
+              <div className="mt-4 text-sm text-indigo-800 bg-white p-4 rounded border border-indigo-100 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: aiSuggestion.replace(/\n/g, '<br/>') }} />
+          )}
+      </div>
+
+      {/* Cost Component - Adapting to new multi-flour structure */}
+      <RecipeCost
+          ingredients={[...flours, ...ingredients]} // Pass flattened list
+          totalFlour={totalFlourWeight}
+          numberOfLoaves={numberOfLoaves}
+          baseFlourName={flours[0]?.name || "Base Flour"} // For legacy prop support inside component if needed
+          baseFlourCost={""} // handled inside item list now
+          onUpdateBaseFlourCost={() => {}} // handled via item update
+          onUpdateIngredientCost={(id, val) => {
+              // Determine if id belongs to flour or ingredient
+              if (flours.some(f => f.id === id)) updateCost('flour', id, val);
+              else updateCost('ingredient', id, val);
+          }}
+          inventory={inventory}
+      />
+
+      {/* --- SAVING --- */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 p-4 shadow-lg z-10">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row gap-4 items-center justify-between">
+              <div className="w-full sm:w-auto flex-grow max-w-md">
+                  <input 
+                      type="text" 
+                      value={recipeName} onChange={e => setRecipeName(e.target.value)}
+                      placeholder="Recipe Name"
+                      className="w-full border-stone-300 rounded-md shadow-sm focus:ring-amber-500 focus:border-amber-500"
+                  />
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                  {currentRecipeId && (
+                      <button onClick={() => handleSaveRecipe(true)} className="flex-1 sm:flex-none px-4 py-2 bg-white border border-stone-300 text-stone-700 rounded-md font-medium text-sm hover:bg-stone-50">
+                          Save Copy
+                      </button>
+                  )}
+                  <button onClick={() => handleSaveRecipe(false)} className="flex-1 sm:flex-none px-6 py-2 bg-amber-600 text-white rounded-md font-medium text-sm hover:bg-amber-700 shadow-sm">
+                      {currentRecipeId ? 'Update Recipe' : 'Save New Recipe'}
+                  </button>
+              </div>
+          </div>
+      </div>
+
     </div>
   );
 };

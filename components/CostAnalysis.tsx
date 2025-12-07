@@ -1,63 +1,97 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { SavedRecipe, InventoryItem } from '../types';
+import { SavedRecipe, InventoryItem, Ingredient } from '../types';
 import { BoxIcon } from './icons/BoxIcon';
-import { storageService } from '../services/storageService';
 
 const CostAnalysis: React.FC = () => {
   const [savedRecipes, setSavedRecipes] = useState<SavedRecipe[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
   useEffect(() => {
-    const loadData = () => {
-        setSavedRecipes(storageService.getRecipes());
-        setInventory(storageService.getInventory());
-    };
-    loadData();
-    window.addEventListener('storage', loadData);
-    return () => window.removeEventListener('storage', loadData);
+    const recipesStr = localStorage.getItem('sourdough_recipes');
+    if (recipesStr) {
+        try {
+            const parsed = JSON.parse(recipesStr);
+            setSavedRecipes(parsed);
+        } catch (e) { console.error(e); }
+    }
+
+    const invStr = localStorage.getItem('sourdough_inventory');
+    if (invStr) setInventory(JSON.parse(invStr));
   }, []);
 
-  const getCostPerKg = (name: string, inventoryId?: string, snapshotCost?: number): number => {
+  // Helper to resolve cost and source
+  const resolveCost = (name: string, inventoryId?: string, snapshotCost?: number): { price: number, source: 'inventory' | 'manual' } => {
       // 1. Try specific inventory link
       if (inventoryId) {
           const item = inventory.find(i => i.id === inventoryId);
-          if (item && item.costPerKg) return item.costPerKg;
+          if (item && item.costPerKg) return { price: item.costPerKg, source: 'inventory' };
       }
       // 2. Try matching name in inventory
-      const match = inventory.find(i => i.name.toLowerCase() === name.toLowerCase());
-      if (match && match.costPerKg) return match.costPerKg;
+      const match = inventory.find(i => i.name.toLowerCase().trim() === name.toLowerCase().trim());
+      if (match && match.costPerKg) return { price: match.costPerKg, source: 'inventory' };
 
       // 3. Fallback to snapshot
-      return snapshotCost || 0;
+      return { price: snapshotCost || 0, source: 'manual' };
   };
 
   const analysis = useMemo(() => {
     return savedRecipes.map(recipe => {
+        // --- CALCULATION LOGIC MIRRORING CALCULATOR ---
         const targetDoughWeight = recipe.numberOfLoaves * recipe.weightPerLoaf;
-        const totalPercentage = 1 + recipe.ingredients.reduce((sum, ing) => sum + (ing.percentage || 0) / 100, 0);
-        const flourWeight = totalPercentage > 0 ? targetDoughWeight / totalPercentage : 0;
+        
+        // Handle migration (legacy recipes might not have 'flours' array)
+        let flours: Ingredient[] = [];
+        if (recipe.flours && recipe.flours.length > 0) {
+            flours = recipe.flours;
+        } else if (recipe.baseFlourName) {
+            // Legacy conversion on fly
+            flours = [{
+                id: 1, name: recipe.baseFlourName, percentage: 100, 
+                inventoryId: recipe.baseFlourInventoryId, costPerKg: recipe.baseFlourCostPerKg
+            }];
+        }
 
-        // Base Flour Cost
-        const baseCostPerKg = getCostPerKg(recipe.baseFlourName || 'Base Flour', recipe.baseFlourInventoryId, recipe.baseFlourCostPerKg);
-        const baseCost = (flourWeight / 1000) * baseCostPerKg;
+        const totalFlourPercentage = flours.reduce((sum, f) => sum + (f.percentage || 0), 0);
+        const totalIngPercentage = recipe.ingredients.reduce((sum, ing) => sum + (ing.percentage || 0), 0);
+        const totalFormulaPercentage = totalFlourPercentage + totalIngPercentage;
 
-        // Ingredients Cost
-        let ingredientsCost = 0;
-        recipe.ingredients.forEach(ing => {
-            const weight = (flourWeight * (ing.percentage || 0)) / 100;
-            const costPerKg = getCostPerKg(ing.name, ing.inventoryId, ing.costPerKg);
-            ingredientsCost += (weight / 1000) * costPerKg;
+        // Total Flour Weight = Total Dough / (Formula % / 100)
+        const totalFlourWeight = totalFormulaPercentage > 0 
+            ? targetDoughWeight / (totalFormulaPercentage / 100) 
+            : 0;
+
+        let inventoryItemsCount = 0;
+        let totalItemsCount = 0;
+        let totalBatchCost = 0;
+
+        // Combine all items to iterate once
+        const allItems = [...flours, ...recipe.ingredients];
+
+        allItems.forEach(item => {
+            totalItemsCount++;
+            
+            // Item Weight = (Total Flour * Item %) / 100
+            const weight = (totalFlourWeight * (item.percentage || 0)) / 100;
+            
+            const res = resolveCost(item.name, item.inventoryId, item.costPerKg);
+            if (res.source === 'inventory') inventoryItemsCount++;
+            
+            const itemCost = (weight / 1000) * res.price;
+            totalBatchCost += itemCost;
         });
 
-        const totalBatchCost = baseCost + ingredientsCost;
         const costPerLoaf = recipe.numberOfLoaves > 0 ? totalBatchCost / recipe.numberOfLoaves : 0;
+
+        let inventoryStatus: 'none' | 'partial' | 'full' = 'none';
+        if (inventoryItemsCount === totalItemsCount && totalItemsCount > 0) inventoryStatus = 'full';
+        else if (inventoryItemsCount > 0) inventoryStatus = 'partial';
 
         return {
             ...recipe,
             totalBatchCost,
             costPerLoaf,
-            baseCostPerKg // tracking to see if we have valid cost data
+            inventoryStatus
         };
     }).sort((a, b) => b.costPerLoaf - a.costPerLoaf);
   }, [savedRecipes, inventory]);
@@ -100,9 +134,17 @@ const CostAnalysis: React.FC = () => {
                                     ${row.totalBatchCost.toFixed(2)}
                                 </td>
                                 <td className="px-6 py-4 text-right">
-                                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold bg-amber-100 text-amber-800">
-                                        ${row.costPerLoaf.toFixed(2)}
-                                    </span>
+                                    <div className="flex items-center justify-end gap-2">
+                                        {row.inventoryStatus === 'full' && (
+                                            <BoxIcon className="w-4 h-4 text-green-600" title="Calculated using live inventory prices" />
+                                        )}
+                                        {row.inventoryStatus === 'partial' && (
+                                            <BoxIcon className="w-4 h-4 text-amber-500" title="Partially calculated using inventory prices" />
+                                        )}
+                                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-bold bg-amber-100 text-amber-800">
+                                            ${row.costPerLoaf.toFixed(2)}
+                                        </span>
+                                    </div>
                                 </td>
                             </tr>
                         ))
@@ -117,7 +159,10 @@ const CostAnalysis: React.FC = () => {
                  <h4 className="font-medium text-stone-800 text-sm">How is this calculated?</h4>
                  <p className="text-xs text-stone-600 mt-1">
                      Costs are calculated dynamically using the current "Cost Per Kg" from your <strong>Inventory Management</strong>. 
-                     If an ingredient isn't in inventory, the system falls back to the manual cost entered when the recipe was last saved.
+                     <br/>
+                     <span className="inline-flex items-center gap-1 mt-1"><BoxIcon className="w-3 h-3 text-green-600" /> Green icon:</span> All ingredient prices derived from Inventory.
+                     <br/>
+                     <span className="inline-flex items-center gap-1"><BoxIcon className="w-3 h-3 text-amber-500" /> Amber icon:</span> Some prices derived from Inventory, others from saved manual values.
                  </p>
              </div>
         </div>

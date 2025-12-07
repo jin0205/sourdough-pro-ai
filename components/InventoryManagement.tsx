@@ -1,9 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { InventoryItem, PlannerItem, UnitOfMeasure } from '../types';
+import { InventoryItem, PlannerItem, UnitOfMeasure, SavedRecipe } from '../types';
 import { CalculatorIcon } from './icons/CalculatorIcon';
-import { storageService } from '../services/storageService';
-import { convertToGrams } from '../utils/conversions';
 
 const InventoryManagement: React.FC = () => {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -21,9 +19,74 @@ const InventoryManagement: React.FC = () => {
   // Load Data & Sync Planner
   useEffect(() => {
     const loadData = () => {
-        setInventory(storageService.getInventory());
-        // syncPlannerItems handles the logic of removing invalid items and updating versions
-        setPlannerItems(storageService.syncPlannerItems());
+        const invStr = localStorage.getItem('sourdough_inventory');
+        if (invStr) {
+            try {
+                setInventory(JSON.parse(invStr));
+            } catch (e) {
+                console.error("Error parsing inventory", e);
+            }
+        }
+
+        // We need both recipes and planner items to sync them
+        const recipesStr = localStorage.getItem('sourdough_recipes');
+        const planStr = localStorage.getItem('sourdough_planner_items');
+        
+        let currentRecipes: SavedRecipe[] = [];
+        let currentPlan: PlannerItem[] = [];
+
+        if (recipesStr) {
+            try {
+                currentRecipes = JSON.parse(recipesStr);
+            } catch (e) { console.error(e); }
+        }
+
+        if (planStr) {
+             try {
+                currentPlan = JSON.parse(planStr);
+            } catch (e) { console.error(e); }
+        }
+
+        // SYNC LOGIC:
+        // Filter out planner items where the recipe no longer exists in savedRecipes (Deleted)
+        // Update planner items if the recipe version in storage is different (Reverted/Updated)
+        const validPlannerItems: PlannerItem[] = [];
+        let hasChanges = false;
+        
+        // Create a map for faster lookup
+        const recipeMap = new Map(currentRecipes.map(r => [r.id, r]));
+
+        currentPlan.forEach(item => {
+            const freshRecipe = recipeMap.get(item.recipe.id);
+            
+            if (!freshRecipe) {
+                // Recipe was deleted from library, so we drop this planner item
+                // This reduces the 'Allocated' amount in inventory
+                hasChanges = true;
+                return; 
+            }
+
+            if (freshRecipe.version !== item.recipe.version) {
+                // Recipe was updated or reverted in library.
+                // We must update the planner item to use the fresh ingredients/weights.
+                validPlannerItems.push({
+                    ...item,
+                    recipe: freshRecipe
+                });
+                hasChanges = true;
+            } else {
+                // No changes, keep existing item
+                validPlannerItems.push(item);
+            }
+        });
+
+        setPlannerItems(validPlannerItems);
+
+        // If we cleaned up the plan, persist it back to storage immediately
+        // so other tabs/components see the correct allocation.
+        if (hasChanges) {
+            localStorage.setItem('sourdough_planner_items', JSON.stringify(validPlannerItems));
+        }
     };
 
     loadData();
@@ -32,6 +95,23 @@ const InventoryManagement: React.FC = () => {
     window.addEventListener('storage', loadData);
     return () => window.removeEventListener('storage', loadData);
   }, []);
+
+  useEffect(() => {
+      if (inventory.length > 0) {
+          localStorage.setItem('sourdough_inventory', JSON.stringify(inventory));
+      }
+  }, [inventory]);
+
+  // Unit Conversion Helpers
+  const convertToGrams = (weight: number, unit: UnitOfMeasure): number => {
+      switch (unit) {
+          case 'lb': return weight * 453.592;
+          case 'oz': return weight * 28.3495;
+          case 'kg': return weight * 1000;
+          case 'g': return weight;
+          default: return weight;
+      }
+  };
 
   // Calculated Preview
   const previewCalculation = useMemo(() => {
@@ -94,7 +174,7 @@ const InventoryManagement: React.FC = () => {
 
       const updatedInventory = [...inventory, newItem];
       setInventory(updatedInventory);
-      storageService.saveInventory(updatedInventory);
+      localStorage.setItem('sourdough_inventory', JSON.stringify(updatedInventory));
       
       setNewItemName('');
       setPackageWeight('');
@@ -106,7 +186,7 @@ const InventoryManagement: React.FC = () => {
       if (window.confirm("Delete this inventory item?")) {
           const updated = inventory.filter(i => i.id !== id);
           setInventory(updated);
-          storageService.saveInventory(updated);
+          localStorage.setItem('sourdough_inventory', JSON.stringify(updated));
       }
   };
 

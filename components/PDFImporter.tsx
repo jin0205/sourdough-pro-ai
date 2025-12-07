@@ -4,14 +4,12 @@ import { parseRecipePdf } from '../services/geminiService';
 import { SavedRecipe, Ingredient } from '../types';
 import Spinner from './Spinner';
 import { DocumentIcon } from './icons/DocumentIcon';
-import { storageService } from '../services/storageService';
 
 interface ExtractedData {
     name: string;
     numberOfLoaves: number;
     weightPerLoaf: number;
     ingredients: { name: string; weight: number }[];
-    instructions?: string;
 }
 
 interface PreviewIngredient {
@@ -25,7 +23,6 @@ interface PreviewState {
     numberOfLoaves: number;
     weightPerLoaf: number;
     ingredients: PreviewIngredient[];
-    instructions: string;
 }
 
 const FLOUR_KEYWORDS = [
@@ -119,8 +116,7 @@ const PDFImporter: React.FC = () => {
                 name: data.name || "Imported Recipe",
                 numberOfLoaves: Number(data.numberOfLoaves) || 1,
                 weightPerLoaf: Number(data.weightPerLoaf) || 1000,
-                ingredients: processedIngredients,
-                instructions: data.instructions || ""
+                ingredients: processedIngredients
             });
         } catch (err: any) {
             console.error(err);
@@ -156,14 +152,23 @@ const PDFImporter: React.FC = () => {
             return;
         }
 
-        // 2. Map to Ingredient Interface with calculated percentage
-        const finalIngredients: Ingredient[] = previewData.ingredients.map((ing, idx) => ({
+        // Calculate percentages and assign IDs
+        const allIngredients = previewData.ingredients.map((ing, idx) => ({
             id: idx + 1,
             name: ing.name,
             percentage: parseFloat(((Number(ing.weight) / totalFlourWeight) * 100).toFixed(1)),
+            isFlour: ing.isFlour
         }));
 
-        // 3. Construct SavedRecipe
+        // Split into flours and other ingredients
+        const finalFlours: Ingredient[] = allIngredients
+            .filter(i => i.isFlour)
+            .map(({ isFlour, ...rest }) => rest);
+            
+        const finalIngredients: Ingredient[] = allIngredients
+            .filter(i => !i.isFlour)
+            .map(({ isFlour, ...rest }) => rest);
+
         // Base Flour Name is the first marked flour, or generic
         const firstFlour = previewData.ingredients.find(i => i.isFlour);
         const baseFlourName = firstFlour ? firstFlour.name : "Bread Flour";
@@ -173,23 +178,26 @@ const PDFImporter: React.FC = () => {
             name: previewData.name || "Imported PDF Recipe",
             numberOfLoaves: Number(previewData.numberOfLoaves) || 1,
             weightPerLoaf: Number(previewData.weightPerLoaf) || 1000,
+            flours: finalFlours,
             ingredients: finalIngredients,
             date: new Date().toLocaleDateString(),
             version: 1,
             history: [],
-            baseFlourName: baseFlourName,
-            instructions: previewData.instructions // Added instructions
+            baseFlourName: baseFlourName
         };
 
-        // 4. Save to Storage Service
+        // 4. Save to LocalStorage
         try {
-            storageService.addOrUpdateRecipe(newRecipe);
+            const existingStr = localStorage.getItem('sourdough_recipes');
+            const existing: SavedRecipe[] = existingStr ? JSON.parse(existingStr) : [];
+            const updated = [...existing, newRecipe];
+            localStorage.setItem('sourdough_recipes', JSON.stringify(updated));
             setSuccessMessage("Recipe saved successfully! Check the Recipe Management tab.");
             setPreviewData(null);
             setFile(null);
         } catch (e) {
             console.error("Save failed", e);
-            setError("Failed to save recipe to storage.");
+            setError("Failed to save recipe to local storage.");
         }
     };
 
@@ -327,17 +335,6 @@ const PDFImporter: React.FC = () => {
                                      * Warning: No flour selected. Baker's percentages cannot be calculated without a Flour Base.
                                  </p>
                              )}
-                        </div>
-
-                        {/* Instructions Section */}
-                        <div>
-                             <label className="block text-xs font-medium text-stone-500 mb-1">Extracted Method & Notes</label>
-                             <textarea
-                                value={previewData.instructions}
-                                onChange={(e) => handleInputChange('instructions', e.target.value)}
-                                className="block w-full px-3 py-2 border border-stone-300 rounded-md text-sm focus:ring-amber-500 focus:border-amber-500 h-32"
-                                placeholder="Extracted instructions will appear here..."
-                             />
                         </div>
 
                         <div className="flex justify-end pt-4">

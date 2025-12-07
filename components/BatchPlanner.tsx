@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { SavedRecipe, PlannerItem, InventoryItem } from '../types';
-import { storageService } from '../services/storageService';
+import { SavedRecipe, PlannerItem, InventoryItem, Ingredient } from '../types';
 
 const BatchPlanner: React.FC = () => {
   const [plannerItems, setPlannerItems] = useState<PlannerItem[]>([]);
@@ -14,25 +13,73 @@ const BatchPlanner: React.FC = () => {
 
   // Load saved recipes, persisted plan, and inventory
   useEffect(() => {
-    const loadData = () => {
-        setSavedRecipes(storageService.getRecipes());
-        // syncPlannerItems handles valid items and version updates
-        setPlannerItems(storageService.syncPlannerItems());
-        setInventory(storageService.getInventory());
-    };
+    const recipesStr = localStorage.getItem('sourdough_recipes');
+    let currentRecipes: SavedRecipe[] = [];
+    if (recipesStr) {
+      try {
+        currentRecipes = JSON.parse(recipesStr);
+        setSavedRecipes(currentRecipes);
+      } catch (e) {
+        console.error('Failed to load recipes', e);
+      }
+    }
 
-    loadData();
+    const planStr = localStorage.getItem('sourdough_planner_items');
+    let currentPlan: PlannerItem[] = [];
+    if (planStr) {
+      try {
+        currentPlan = JSON.parse(planStr);
+      } catch (e) {
+        console.error('Failed to load plan', e);
+      }
+    }
 
-    // Listen for storage events (e.g. changes in other tabs)
-    window.addEventListener('storage', loadData);
-    return () => window.removeEventListener('storage', loadData);
+    // SYNC LOGIC: Ensure Planner Items are valid against saved recipes
+    const validPlannerItems: PlannerItem[] = [];
+    let hasChanges = false;
+    const recipeMap = new Map(currentRecipes.map(r => [r.id, r]));
+
+    currentPlan.forEach(item => {
+        const freshRecipe = recipeMap.get(item.recipe.id);
+        if (!freshRecipe) {
+             // Recipe Deleted - remove from plan
+             hasChanges = true;
+             return;
+        }
+
+        if (freshRecipe.version !== item.recipe.version) {
+             // Recipe Updated/Reverted - update plan
+             validPlannerItems.push({ ...item, recipe: freshRecipe });
+             hasChanges = true;
+        } else {
+             validPlannerItems.push(item);
+        }
+    });
+
+    setPlannerItems(validPlannerItems);
+    if (hasChanges) {
+        localStorage.setItem('sourdough_planner_items', JSON.stringify(validPlannerItems));
+    }
+
+    const invStr = localStorage.getItem('sourdough_inventory');
+    if (invStr) {
+        try {
+            setInventory(JSON.parse(invStr));
+        } catch (e) {
+            console.error('Failed to load inventory', e);
+        }
+    }
   }, []);
 
-  // Persist plan changes via storageService
-  const updatePlan = (newItems: PlannerItem[]) => {
-      setPlannerItems(newItems);
-      storageService.savePlannerItems(newItems);
-  };
+  // Persist plan changes
+  useEffect(() => {
+    if (plannerItems.length > 0) {
+         localStorage.setItem('sourdough_planner_items', JSON.stringify(plannerItems));
+    } else {
+        const existing = localStorage.getItem('sourdough_planner_items');
+        if (existing) localStorage.setItem('sourdough_planner_items', JSON.stringify([]));
+    }
+  }, [plannerItems]);
 
   const addToPlan = (recipe: SavedRecipe) => {
     const newItem: PlannerItem = {
@@ -40,19 +87,18 @@ const BatchPlanner: React.FC = () => {
       recipe: recipe,
       count: recipe.numberOfLoaves
     };
-    updatePlan([...plannerItems, newItem]);
+    setPlannerItems([...plannerItems, newItem]);
   };
 
   const removeFromPlan = (uniqueId: string) => {
-    updatePlan(plannerItems.filter(i => i.uniqueId !== uniqueId));
+    setPlannerItems(plannerItems.filter(i => i.uniqueId !== uniqueId));
   };
 
   const updatePlanCount = (uniqueId: string, countStr: string) => {
     const count = parseFloat(countStr);
-    const updated = plannerItems.map(i =>
+    setPlannerItems(plannerItems.map(i =>
       i.uniqueId === uniqueId ? { ...i, count: isNaN(count) ? 0 : count } : i
-    );
-    updatePlan(updated);
+    ));
   };
 
   const plannerSummary = useMemo<{ summary: Record<string, { weight: number, cost: number }>; totalDough: number; totalCost: number }>(() => {
@@ -62,16 +108,13 @@ const BatchPlanner: React.FC = () => {
 
     // Helper to resolve cost
     const getCostPerKg = (name: string, inventoryId?: string, snapshotCost?: number): number => {
-        // 1. Try specific inventory link
         if (inventoryId) {
             const item = inventory.find(i => i.id === inventoryId);
             if (item && item.costPerKg) return item.costPerKg;
         }
-        // 2. Try matching name in inventory
-        const match = inventory.find(i => i.name.toLowerCase() === name.toLowerCase());
+        const match = inventory.find(i => i.name.toLowerCase().trim() === name.toLowerCase().trim());
         if (match && match.costPerKg) return match.costPerKg;
 
-        // 3. Fallback to snapshot
         return snapshotCost || 0;
     };
 
@@ -80,36 +123,43 @@ const BatchPlanner: React.FC = () => {
       const targetBatchWeight = (Number(count) || 0) * (Number(recipe.weightPerLoaf) || 0);
       totalDough += targetBatchWeight;
 
-      const totalPercentage = 1 + recipe.ingredients.reduce((sum, ing) => sum + (Number(ing.percentage) || 0) / 100, 0);
-      const flourWeight = totalPercentage > 0 ? targetBatchWeight / totalPercentage : 0;
+      // --- NEW MULTI-FLOUR LOGIC ---
+      let flours: Ingredient[] = [];
+      if (recipe.flours && recipe.flours.length > 0) {
+          flours = recipe.flours;
+      } else if (recipe.baseFlourName) {
+           // Fallback for old recipes
+           flours = [{ id: 1, name: recipe.baseFlourName, percentage: 100, inventoryId: recipe.baseFlourInventoryId, costPerKg: recipe.baseFlourCostPerKg }];
+      }
 
-      // Base Flour
-      const baseName = recipe.baseFlourName || "Base Flour";
-      // Try to unify base flours if named same
-      if (!summary[baseName]) summary[baseName] = { weight: 0, cost: 0 };
-      
-      const baseCostPerKg = getCostPerKg(baseName, recipe.baseFlourInventoryId, recipe.baseFlourCostPerKg);
-      const baseCost = (flourWeight / 1000) * baseCostPerKg;
-      
-      summary[baseName].weight += flourWeight;
-      summary[baseName].cost += baseCost;
-      totalCost += baseCost;
+      const totalFlourPct = flours.reduce((sum, f) => sum + (f.percentage || 0), 0);
+      const totalIngPct = recipe.ingredients.reduce((sum, ing) => sum + (ing.percentage || 0), 0);
+      const totalFormulaPct = totalFlourPct + totalIngPct;
 
-      // Ingredients
-      recipe.ingredients.forEach(ing => {
-        if (!ing.name) return;
-        const weight = (flourWeight * (Number(ing.percentage) || 0)) / 100;
-        const name = ing.name.trim();
-        
-        if (!summary[name]) summary[name] = { weight: 0, cost: 0 };
-        
-        const ingCostPerKg = getCostPerKg(name, ing.inventoryId, ing.costPerKg);
-        const ingCost = (weight / 1000) * ingCostPerKg;
+      const totalFlourWeight = totalFormulaPct > 0 ? targetBatchWeight / (totalFormulaPct / 100) : 0;
 
-        summary[name].weight += weight;
-        summary[name].cost += ingCost;
-        totalCost += ingCost;
-      });
+      // Helper to process a list of items
+      const processItems = (list: Ingredient[]) => {
+          list.forEach(ing => {
+              if (!ing.name) return;
+              const name = ing.name.trim();
+              
+              // Weight = TotalFlourWeight * Percentage / 100
+              const weight = (totalFlourWeight * (Number(ing.percentage) || 0)) / 100;
+              
+              if (!summary[name]) summary[name] = { weight: 0, cost: 0 };
+              
+              const costPerKg = getCostPerKg(name, ing.inventoryId, ing.costPerKg);
+              const cost = (weight / 1000) * costPerKg;
+              
+              summary[name].weight += weight;
+              summary[name].cost += cost;
+              totalCost += cost;
+          });
+      };
+
+      processItems(flours);
+      processItems(recipe.ingredients);
     });
 
     return { summary, totalDough, totalCost };
@@ -136,7 +186,7 @@ const BatchPlanner: React.FC = () => {
           count: parseFloat((item.count * factor).toFixed(2))
       }));
 
-      updatePlan(updatedItems);
+      setPlannerItems(updatedItems);
       setBatchScaleValue(''); // Reset input to indicate completion
   };
 
@@ -178,7 +228,7 @@ const BatchPlanner: React.FC = () => {
             <div className="flex justify-between items-center mb-3">
                <h3 className="font-semibold text-stone-800">Current Plan</h3>
                {plannerItems.length > 0 && (
-                   <button onClick={() => updatePlan([])} className="text-xs text-red-500 hover:text-red-700">Clear All</button>
+                   <button onClick={() => setPlannerItems([])} className="text-xs text-red-500 hover:text-red-700">Clear All</button>
                )}
             </div>
             

@@ -7,12 +7,14 @@ import Spinner from './Spinner';
 import { suggestIngredientCost } from '../services/geminiService';
 
 interface RecipeCostProps {
-  ingredients: Ingredient[];
+  ingredients: Ingredient[]; // Now includes flours
   totalFlour: number;
   numberOfLoaves: number;
-  baseFlourName: string;
-  baseFlourCost: string;
-  onUpdateBaseFlourCost: (value: string) => void;
+  // Legacy props kept for compatibility but largely unused in new logic
+  baseFlourName?: string;
+  baseFlourCost?: string;
+  onUpdateBaseFlourCost?: (value: string) => void;
+  
   onUpdateIngredientCost: (id: number, value: string) => void;
   inventory: InventoryItem[];
 }
@@ -21,23 +23,20 @@ const RecipeCost: React.FC<RecipeCostProps> = ({
   ingredients,
   totalFlour,
   numberOfLoaves,
-  baseFlourName,
-  baseFlourCost,
-  onUpdateBaseFlourCost,
   onUpdateIngredientCost,
   inventory
 }) => {
   // State for AI suggestions
-  const [loadingSuggestion, setLoadingSuggestion] = useState<number | 'base' | null>(null);
+  const [loadingSuggestion, setLoadingSuggestion] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<Record<string, number>>({});
 
   // Helper to find inventory cost
   const getInventoryCost = (name: string): number | undefined => {
-      const match = inventory.find(i => i.name.toLowerCase() === name.toLowerCase());
+      const match = inventory.find(i => i.name.toLowerCase().trim() === name.toLowerCase().trim());
       return match ? match.costPerKg : undefined;
   };
 
-  const handleSuggestCost = async (name: string, id: number | 'base') => {
+  const handleSuggestCost = async (name: string, id: number) => {
       setLoadingSuggestion(id);
       const suggestedPrice = await suggestIngredientCost(name);
       
@@ -49,43 +48,29 @@ const RecipeCost: React.FC<RecipeCostProps> = ({
       setLoadingSuggestion(null);
   };
 
-  const applySuggestion = (id: number | 'base', price: number) => {
-      if (id === 'base') {
-          onUpdateBaseFlourCost(price.toFixed(2));
-      } else {
-          onUpdateIngredientCost(id as number, price.toFixed(2));
-      }
-      // Clear suggestion after applying
+  const applySuggestion = (id: number, price: number) => {
+      onUpdateIngredientCost(id, price.toFixed(2));
       const newSuggestions = { ...suggestions };
       delete newSuggestions[id.toString()];
       setSuggestions(newSuggestions);
   };
 
   const calculation = useMemo(() => {
-      // Base Flour Cost Strategy:
-      // 1. Try to find cost in inventory matching baseFlourName
-      // 2. Fallback to manual input (baseFlourCost)
-      const invBaseCost = getInventoryCost(baseFlourName);
-      const manualBaseCost = parseFloat(baseFlourCost);
+      let totalRecipeCost = 0;
       
-      const effectiveBaseCost = invBaseCost !== undefined ? invBaseCost : (isNaN(manualBaseCost) ? 0 : manualBaseCost);
-      const usingInvBase = invBaseCost !== undefined;
-
-      // totalFlour is in grams, cost is per kg
-      const baseTotal = (totalFlour / 1000) * effectiveBaseCost;
-      
-      let totalIngredientsCost = 0;
-      const ingredientBreakdown = ingredients.map(ing => {
+      const breakdown = ingredients.map(ing => {
+          // Weight calculation: (Total Flour Weight * Percentage) / 100
+          // For flours in the new system, Percentage = (FlourWeight / TotalFlourWeight) * 100
+          // So this formula works for both flours and ingredients.
           const weight = (totalFlour * (ing.percentage || 0)) / 100;
           
-          // Ingredient Cost Strategy:
-          // 1. Try to find cost in inventory matching ing.name
-          // 2. Fallback to manual input stored on ingredient
+          // Cost Strategy: Inventory > Manual
           const invCost = getInventoryCost(ing.name);
           const effectiveCostPerKg = invCost !== undefined ? invCost : (ing.costPerKg || 0);
           
+          // Cost = (Weight in kg) * CostPerKg
           const cost = (weight / 1000) * effectiveCostPerKg;
-          totalIngredientsCost += cost;
+          totalRecipeCost += cost;
           
           return { 
               ...ing, 
@@ -96,19 +81,18 @@ const RecipeCost: React.FC<RecipeCostProps> = ({
           };
       });
 
-      const totalRecipeCost = baseTotal + totalIngredientsCost;
       const costPerLoaf = numberOfLoaves > 0 ? totalRecipeCost / numberOfLoaves : 0;
 
-      return { baseTotal, ingredientBreakdown, totalRecipeCost, costPerLoaf, effectiveBaseCost, usingInvBase };
-  }, [totalFlour, baseFlourName, baseFlourCost, ingredients, numberOfLoaves, inventory]);
+      return { breakdown, totalRecipeCost, costPerLoaf };
+  }, [totalFlour, ingredients, numberOfLoaves, inventory]);
 
   if (totalFlour <= 0) return null;
 
   return (
-    <div className="bg-white p-6 rounded-lg border border-stone-200 shadow-sm mt-6 animate-fade-in">
+    <div className="bg-white p-6 rounded-lg border border-stone-200 shadow-sm mt-6 animate-fade-in mb-20">
       <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold text-stone-800 flex items-center gap-2">
-            Recipe Cost Calculator
+            Cost Analysis
           </h3>
           <span className="text-xs text-stone-500 bg-stone-100 px-2 py-1 rounded border border-stone-200">Prices per kg</span>
       </div>
@@ -124,69 +108,10 @@ const RecipeCost: React.FC<RecipeCostProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
-            {/* Base Flour */}
-            <tr className="hover:bg-stone-50">
-              <td className="px-4 py-2 text-sm font-medium text-stone-900">
-                  {baseFlourName || 'Base Flour (Total)'}
-                  {calculation.usingInvBase && (
-                      <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800" title="Using price from Inventory">
-                          <BoxIcon className="w-3 h-3 mr-1" /> Inv
-                      </span>
-                  )}
-              </td>
-              <td className="px-4 py-2 text-sm text-stone-600 text-right">{totalFlour.toFixed(0)}g</td>
-              <td className="px-4 py-2 text-right">
-                <div className="flex flex-col items-end">
-                    <div className="flex items-center justify-end gap-2">
-                        {calculation.usingInvBase ? (
-                             <span className="text-sm text-stone-800">${calculation.effectiveBaseCost.toFixed(2)}</span>
-                        ) : (
-                            <>
-                                <button
-                                    onClick={() => handleSuggestCost(baseFlourName || 'Bread Flour', 'base')}
-                                    disabled={loadingSuggestion === 'base'}
-                                    className="p-1 text-stone-400 hover:text-amber-600 hover:bg-amber-50 rounded-full transition-colors"
-                                    title="Auto-suggest market price"
-                                >
-                                    {loadingSuggestion === 'base' ? <Spinner /> : <SparklesIcon className="w-4 h-4" />}
-                                </button>
-                                <div className="relative rounded-md shadow-sm w-24">
-                                        <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
-                                            <span className="text-stone-400 sm:text-xs">$</span>
-                                        </div>
-                                        <input
-                                        type="number"
-                                        step="0.01"
-                                        value={baseFlourCost}
-                                        onChange={(e) => onUpdateBaseFlourCost(e.target.value)}
-                                        className="focus:ring-amber-500 focus:border-amber-500 block w-full sm:text-xs border-stone-300 rounded-md pl-5 py-1 text-right"
-                                        placeholder="0.00"
-                                        />
-                                </div>
-                            </>
-                        )}
-                    </div>
-                    {/* Suggestion Popunder */}
-                    {suggestions['base'] !== undefined && !calculation.usingInvBase && (
-                         <button 
-                            onClick={() => applySuggestion('base', suggestions['base'])}
-                            className="text-[10px] text-amber-600 font-medium hover:underline mt-1 flex items-center cursor-pointer animate-fade-in"
-                         >
-                             Est: ${suggestions['base'].toFixed(2)} &larr; Apply
-                         </button>
-                    )}
-                </div>
-              </td>
-              <td className="px-4 py-2 text-sm text-stone-800 text-right font-medium">
-                ${calculation.baseTotal.toFixed(2)}
-              </td>
-            </tr>
-            
-            {/* Ingredients */}
-            {calculation.ingredientBreakdown.map(item => (
+            {calculation.breakdown.map(item => (
                 <tr key={item.id} className="hover:bg-stone-50">
                     <td className="px-4 py-2 text-sm text-stone-900">
-                        {item.name || 'Unnamed Ingredient'}
+                        {item.name || 'Unnamed'}
                         {item.usingInventory && (
                             <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800" title="Using price from Inventory">
                                 <BoxIcon className="w-3 h-3 mr-1" /> Inv
