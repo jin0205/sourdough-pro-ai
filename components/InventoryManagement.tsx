@@ -3,7 +3,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { InventoryItem, PlannerItem, UnitOfMeasure, SavedRecipe } from '../types';
 import { CalculatorIcon } from './icons/CalculatorIcon';
 // Import the common lists for consistency. 
-// Ideally these would be in a shared constant file, but we will define the combined list here for the datalist.
 const COMMON_INGREDIENTS_LIST = [
   // Flours
   'Bread Flour', 'Strong White Flour', 'All-Purpose Flour', 'Whole Wheat Flour', 
@@ -73,50 +72,32 @@ const InventoryManagement: React.FC = () => {
         }
 
         // SYNC LOGIC:
-        // Filter out planner items where the recipe no longer exists in savedRecipes (Deleted)
-        // Update planner items if the recipe version in storage is different (Reverted/Updated)
         const validPlannerItems: PlannerItem[] = [];
         let hasChanges = false;
         
-        // Create a map for faster lookup
         const recipeMap = new Map(currentRecipes.map(r => [r.id, r]));
 
         currentPlan.forEach(item => {
             const freshRecipe = recipeMap.get(item.recipe.id);
-            
             if (!freshRecipe) {
-                // Recipe was deleted from library, so we drop this planner item
-                // This reduces the 'Allocated' amount in inventory
                 hasChanges = true;
                 return; 
             }
-
             if (freshRecipe.version !== item.recipe.version) {
-                // Recipe was updated or reverted in library.
-                // We must update the planner item to use the fresh ingredients/weights.
-                validPlannerItems.push({
-                    ...item,
-                    recipe: freshRecipe
-                });
+                validPlannerItems.push({ ...item, recipe: freshRecipe });
                 hasChanges = true;
             } else {
-                // No changes, keep existing item
                 validPlannerItems.push(item);
             }
         });
 
         setPlannerItems(validPlannerItems);
-
-        // If we cleaned up the plan, persist it back to storage immediately
-        // so other tabs/components see the correct allocation.
         if (hasChanges) {
             localStorage.setItem('sourdough_planner_items', JSON.stringify(validPlannerItems));
         }
     };
 
     loadData();
-    
-    // Listen for storage events (e.g. recipe deleted in another tab)
     window.addEventListener('storage', loadData);
     return () => window.removeEventListener('storage', loadData);
   }, []);
@@ -164,8 +145,6 @@ const InventoryManagement: React.FC = () => {
         const { recipe, count } = item;
         const targetBatchWeight = (Number(count) || 0) * (Number(recipe.weightPerLoaf) || 0);
         
-        // --- NEW MULTI-FLOUR LOGIC for Requirements ---
-        // We must correctly iterate through all flours + ingredients
         let flours = recipe.flours || [];
         if (flours.length === 0 && recipe.baseFlourName) {
             flours = [{ id: 1, name: recipe.baseFlourName, percentage: 100 }];
@@ -175,7 +154,6 @@ const InventoryManagement: React.FC = () => {
         const totalIngPct = recipe.ingredients.reduce((sum, ing) => sum + (Number(ing.percentage) || 0), 0);
         const totalFormulaPct = totalFlourPct + totalIngPct;
 
-        // Total Flour Weight for this batch
         const totalFlourWeight = totalFormulaPct > 0 ? targetBatchWeight / (totalFormulaPct / 100) : 0;
 
         const processList = (list: any[]) => {
@@ -203,8 +181,6 @@ const InventoryManagement: React.FC = () => {
           quantity: previewCalculation.totalGrams,
           costPerKg: previewCalculation.costPerKg,
           lastUpdated: new Date().toISOString(),
-          
-          // Save package details for future editing
           packageWeight: parseFloat(packageWeight),
           packageUnit,
           itemsPerPackage: parseFloat(itemsPerPackage),
@@ -279,7 +255,6 @@ const InventoryManagement: React.FC = () => {
 
   return (
     <div className="animate-fade-in">
-       {/* DATALIST FOR AUTOCOMPLETE */}
        <datalist id="common-ingredients">
             {COMMON_INGREDIENTS_LIST.map((name, idx) => (
                 <option key={idx} value={name} />
@@ -288,10 +263,10 @@ const InventoryManagement: React.FC = () => {
 
        <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-            <h2 className="text-2xl font-bold text-stone-800 mb-1">Inventory Management</h2>
-            <p className="text-stone-600">Track stock with smart unit conversions.</p>
+            <h2 className="text-2xl font-bold text-stone-800 dark:text-stone-100 mb-1">Inventory Management</h2>
+            <p className="text-stone-600 dark:text-stone-400">Track stock with smart unit conversions.</p>
         </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center text-amber-800 text-sm">
+        <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-lg p-3 flex items-center text-amber-800 dark:text-amber-400 text-sm transition-colors">
             <CalculatorIcon className="w-5 h-5 mr-2" />
             <span>
                 Allocated stock updates automatically from the <strong>Batch Planner</strong>.
@@ -300,24 +275,24 @@ const InventoryManagement: React.FC = () => {
       </div>
 
       {/* Add New Item Form */}
-      <div className="bg-white p-6 rounded-lg border border-stone-200 shadow-sm mb-8">
-          <h3 className="font-semibold text-stone-800 mb-4 border-b border-stone-100 pb-2">Receive New Stock</h3>
+      <div className="bg-white dark:bg-stone-900/60 p-6 rounded-lg border border-stone-200 dark:border-stone-800 shadow-sm mb-8 transition-colors">
+          <h3 className="font-semibold text-stone-800 dark:text-stone-100 mb-4 border-b border-stone-100 dark:border-stone-800/40 pb-2">Receive New Stock</h3>
           <form onSubmit={addInventoryItem}>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
                   <div className="lg:col-span-2">
-                      <label className="block text-xs font-medium text-stone-500 mb-1">Ingredient Name</label>
+                      <label className="block text-xs font-medium text-stone-500 dark:text-stone-400 mb-1">Ingredient Name</label>
                       <input
                         type="text"
                         list="common-ingredients" 
                         value={newItemName}
                         onChange={(e) => setNewItemName(e.target.value)}
                         placeholder="e.g., King Arthur Bread Flour"
-                        className="block w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-md focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
+                        className="block w-full px-3 py-2 bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-md focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm dark:text-stone-100"
                       />
                   </div>
                   
                   <div>
-                      <label className="block text-xs font-medium text-stone-500 mb-1">Weight / Package</label>
+                      <label className="block text-xs font-medium text-stone-500 dark:text-stone-400 mb-1">Weight / Package</label>
                       <div className="flex">
                         <input
                             type="number"
@@ -325,12 +300,12 @@ const InventoryManagement: React.FC = () => {
                             value={packageWeight}
                             onChange={(e) => setPackageWeight(e.target.value)}
                             placeholder="5"
-                            className="block w-full px-3 py-2 bg-stone-50 border border-r-0 border-stone-300 rounded-l-md focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
+                            className="block w-full px-3 py-2 bg-stone-50 dark:bg-stone-950 border border-r-0 border-stone-300 dark:border-stone-700 focus:ring-amber-500 focus:border-amber-500 sm:text-sm dark:text-stone-100"
                         />
                         <select
                             value={packageUnit}
                             onChange={(e) => setPackageUnit(e.target.value as UnitOfMeasure)}
-                            className="inline-flex items-center px-2 py-2 border border-l-0 border-stone-300 bg-stone-100 text-stone-600 sm:text-sm rounded-r-md focus:ring-amber-500 focus:border-amber-500"
+                            className="inline-flex items-center px-2 py-2 border border-l-0 border-stone-300 dark:border-stone-700 bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 sm:text-sm rounded-r-md focus:ring-amber-500 focus:border-amber-500"
                         >
                             <option value="lb">lb</option>
                             <option value="oz">oz</option>
@@ -341,10 +316,10 @@ const InventoryManagement: React.FC = () => {
                   </div>
 
                   <div>
-                      <label className="block text-xs font-medium text-stone-500 mb-1">Cost / Package</label>
+                      <label className="block text-xs font-medium text-stone-500 dark:text-stone-400 mb-1">Cost / Package</label>
                       <div className="relative rounded-md shadow-sm">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <span className="text-stone-500 sm:text-sm">$</span>
+                            <span className="text-stone-500 dark:text-stone-400 sm:text-sm">$</span>
                         </div>
                         <input
                             type="number"
@@ -352,40 +327,40 @@ const InventoryManagement: React.FC = () => {
                             value={costPerPackage}
                             onChange={(e) => setCostPerPackage(e.target.value)}
                             placeholder="0.00"
-                            className="block w-full pl-7 px-3 py-2 bg-stone-50 border border-stone-300 rounded-md focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
+                            className="block w-full pl-7 px-3 py-2 bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-md focus:ring-amber-500 focus:border-amber-500 sm:text-sm dark:text-stone-100"
                         />
                       </div>
                   </div>
 
                   <div>
-                      <label className="block text-xs font-medium text-stone-500 mb-1">Items / Package</label>
+                      <label className="block text-xs font-medium text-stone-500 dark:text-stone-400 mb-1">Items / Package</label>
                       <input
                         type="number"
                         step="1"
                         value={itemsPerPackage}
                         onChange={(e) => setItemsPerPackage(e.target.value)}
                         placeholder="1"
-                        className="block w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-md focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
+                        className="block w-full px-3 py-2 bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-md focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm dark:text-stone-100"
                       />
-                      <span className="text-[10px] text-stone-400">e.g., Case of 12</span>
+                      <span className="text-[10px] text-stone-400 dark:text-stone-500">e.g., Case of 12</span>
                   </div>
               </div>
 
-              <div className="flex items-center justify-between bg-stone-50 p-3 rounded-md border border-stone-200">
+              <div className="flex items-center justify-between bg-stone-50 dark:bg-stone-800/40 p-3 rounded-md border border-stone-200 dark:border-stone-700/60 transition-colors">
                   <div className="flex gap-6 text-sm">
                       <div>
-                          <span className="text-stone-500 block text-xs">Total Weight</span>
-                          <span className="font-semibold text-stone-800">{previewCalculation ? previewCalculation.totalWeightDisplay : '-'}</span>
+                          <span className="text-stone-500 dark:text-stone-400 block text-xs">Total Weight</span>
+                          <span className="font-semibold text-stone-800 dark:text-stone-100">{previewCalculation ? previewCalculation.totalWeightDisplay : '-'}</span>
                       </div>
                       <div>
-                           <span className="text-stone-500 block text-xs">Calculated Cost</span>
-                           <span className="font-semibold text-stone-800">{previewCalculation ? `$${previewCalculation.costPerKg.toFixed(2)} / kg` : '-'}</span>
+                           <span className="text-stone-500 dark:text-stone-400 block text-xs">Calculated Cost</span>
+                           <span className="font-semibold text-stone-800 dark:text-stone-100">{previewCalculation ? `$${previewCalculation.costPerKg.toFixed(2)} / kg` : '-'}</span>
                       </div>
                   </div>
                   <button
                     type="submit"
                     disabled={!newItemName || !previewCalculation}
-                    className="px-6 py-2 bg-stone-800 text-white rounded-md hover:bg-stone-900 disabled:bg-stone-300 disabled:cursor-not-allowed transition-colors font-medium text-sm"
+                    className="px-6 py-2 bg-stone-800 dark:bg-amber-600 text-white rounded-md hover:bg-stone-900 dark:hover:bg-amber-700 disabled:bg-stone-300 dark:disabled:bg-stone-800 disabled:cursor-not-allowed transition-colors font-medium text-sm"
                   >
                       Add to Inventory
                   </button>
@@ -394,52 +369,52 @@ const InventoryManagement: React.FC = () => {
       </div>
 
       {/* Inventory Table */}
-      <div className="bg-white rounded-lg border border-stone-200 shadow-sm overflow-hidden">
+      <div className="bg-white dark:bg-stone-900/60 rounded-lg border border-stone-200 dark:border-stone-800 shadow-sm overflow-hidden transition-colors">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-stone-200">
-                <thead className="bg-stone-50">
+            <table className="min-w-full divide-y divide-stone-200 dark:divide-stone-800/60">
+                <thead className="bg-stone-50 dark:bg-stone-950/40">
                     <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Ingredient</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Last Purchase</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">In Stock</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider text-amber-600">Allocated</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Balance</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Value</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider">Ingredient</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider">Last Purchase</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider">In Stock</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider text-amber-600">Allocated</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider">Balance</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider">Value</th>
                         <th className="px-6 py-3"></th>
                     </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-stone-200">
+                <tbody className="divide-y divide-stone-200 dark:divide-stone-800/40">
                     {tableRows.length === 0 ? (
                         <tr>
-                            <td colSpan={7} className="px-6 py-10 text-center text-stone-500">
+                            <td colSpan={7} className="px-6 py-10 text-center text-stone-500 dark:text-stone-400 bg-white dark:bg-transparent transition-colors">
                                 Inventory empty. Add items above.
                             </td>
                         </tr>
                     ) : (
                         tableRows.map((row, idx) => (
-                            <tr key={row.id || `missing-${idx}`} className="hover:bg-stone-50">
+                            <tr key={row.id || `missing-${idx}`} className="hover:bg-stone-50 dark:hover:bg-stone-800/40 transition-colors">
                                 <td className="px-6 py-4">
-                                    <div className="font-medium text-stone-900">{row.name}</div>
-                                    {!row.id && <span className="text-xs text-red-500 bg-red-50 px-1.5 rounded">Not tracked</span>}
+                                    <div className="font-medium text-stone-900 dark:text-stone-100">{row.name}</div>
+                                    {!row.id && <span className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-1.5 rounded">Not tracked</span>}
                                 </td>
-                                <td className="px-6 py-4 text-xs text-stone-500">
+                                <td className="px-6 py-4 text-xs text-stone-500 dark:text-stone-400">
                                     {row.packageDetails || '-'}
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-stone-600">
+                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-stone-600 dark:text-stone-400">
                                     {row.id ? (row.inStock / 1000).toFixed(2) : '-'} kg
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-right text-amber-700 font-medium text-sm">
+                                <td className="px-6 py-4 whitespace-nowrap text-right text-amber-700 dark:text-amber-400 font-medium text-sm">
                                     {row.allocated > 0 ? (row.allocated / 1000).toFixed(2) : '-'} kg
                                 </td>
-                                <td className={`px-6 py-4 whitespace-nowrap text-right text-sm font-bold ${row.balance < 0 ? 'text-red-600' : 'text-stone-700'}`}>
+                                <td className={`px-6 py-4 whitespace-nowrap text-right text-sm font-bold ${row.balance < 0 ? 'text-red-600' : 'text-stone-700 dark:text-stone-200'}`}>
                                     {(row.balance / 1000).toFixed(2)} kg
                                 </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-stone-600">
+                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-stone-600 dark:text-stone-400">
                                    {row.cost ? `$${row.cost.toFixed(2)}/kg` : '-'}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     {row.id && (
-                                        <button onClick={() => deleteItem(row.id!)} className="text-stone-400 hover:text-red-600 transition-colors">
+                                        <button onClick={() => deleteItem(row.id!)} className="text-stone-400 dark:text-stone-500 hover:text-red-600 transition-colors">
                                             Delete
                                         </button>
                                     )}

@@ -22,11 +22,45 @@ async function fileToGenerativePart(file: File): Promise<{ inlineData: { data: s
   };
 }
 
+// SHARED NORMALIZATION PROMPT FRAGMENT
+const NORMALIZATION_INSTRUCTIONS = `
+### CRITICAL: UNIT NORMALIZATION HEURISTICS:
+The app requires all weights in **GRAMS (g)**. Use the following conversion logic for less structured or non-metric text:
+
+#### A. Standard Mass Conversions:
+- 1 kg = 1000g
+- 1 lb = 453.6g
+- 1 oz = 28.35g
+- 1 stone = 6350g
+
+#### B. Volume-to-Weight (Density-Aware):
+If an ingredient is given in cups, spoons, or milliliters, use these specific densities:
+- **Liquids (Water, Milk, Cider, Beer)**: 1 cup ≈ 240g | 1 tbsp ≈ 15g | 1 tsp ≈ 5g | 1 ml ≈ 1g
+- **Flours (All types)**: 1 cup ≈ 125g | 1 tbsp ≈ 8g
+- **Sugars**: 1 cup Granulated ≈ 200g | 1 cup Brown (Packed) ≈ 215g | 1 tbsp ≈ 12g
+- **Fats**: 1 cup Butter ≈ 227g | 1 stick Butter ≈ 113g | 1 cup Oil ≈ 218g
+- **Honey/Syrups**: 1 cup ≈ 340g | 1 tbsp ≈ 21g
+- **Salt (Fine)**: 1 tsp ≈ 6g | 1 tbsp ≈ 18g
+- **Yeast (Instant/Dry)**: 1 tsp ≈ 3g | 1 tbsp ≈ 9g
+
+#### C. Informal/Culinary Units:
+- **"Pinch" or "Dash"**: 1g
+- **"Smidgen"**: 0.5g
+- **"Large Egg"**: 50g (shelled)
+- **"Clove of Garlic"**: 5g
+- **"Medium Onion"**: 150g
+- **"Half a bag/packet"**: Estimate based on standard retail sizes.
+
+#### D. Percentage-Only Recipes:
+- If only Baker's Percentages are provided, assume a Total Flour Weight of 1000g.
+`;
+
+// Updated model to gemini-3-flash-preview for basic text and vision tasks
 export const analyzeImage = async (imageFile: File, prompt: string): Promise<string> => {
   try {
     const imagePart = await fileToGenerativePart(imageFile);
     const response: GenerateContentResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: { parts: [imagePart, { text: prompt }] },
     });
     return response.text || "No analysis available.";
@@ -40,33 +74,26 @@ export const parseRecipePdf = async (pdfFile: File): Promise<string> => {
     try {
         const pdfPart = await fileToGenerativePart(pdfFile);
         const prompt = `
-        You are a data extraction assistant for a professional bakery app.
-        Extract the recipe details from the provided PDF file.
+        You are a highly precise data extraction assistant for a professional bakery application. 
+        Extract the recipe details from this PDF.
         
-        Rules:
-        1. Extract the Recipe Name.
-        2. Identify the "Yield" (number of loaves/units) and the approximate weight per unit if available. If not specified, estimate a standard loaf is 900g, or default to 1 loaf at total weight.
-        3. Extract all Ingredients and their Weights.
-        4. **CRITICAL**: Convert all weights to GRAMS (g). If inputs are in lbs/oz/cups, convert them to grams.
-        5. Return ONLY a valid JSON object. Do not include markdown formatting like \`\`\`json.
-        
-        JSON Structure:
         {
-          "name": "Recipe Name",
+          "name": "string",
           "numberOfLoaves": number,
           "weightPerLoaf": number,
           "ingredients": [
-            { "name": "Ingredient Name", "weight": number }
+            { "name": "string", "weight": number }
           ]
         }
+
+        ${NORMALIZATION_INSTRUCTIONS}
+        Return ONLY valid JSON.
         `;
 
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-flash-preview',
             contents: { parts: [pdfPart, { text: prompt }] },
-            config: {
-                responseMimeType: 'application/json'
-            }
+            config: { responseMimeType: 'application/json' }
         });
         
         return response.text || "{}";
@@ -76,10 +103,48 @@ export const parseRecipePdf = async (pdfFile: File): Promise<string> => {
     }
 };
 
+export const parseRecipeText = async (text: string): Promise<string> => {
+    try {
+        const prompt = `
+        Extract recipe details from the following raw text or CSV data (likely from a Google Sheet or clipboard):
+        
+        INPUT DATA:
+        """
+        ${text}
+        """
+
+        OUTPUT FORMAT:
+        {
+          "name": "string",
+          "numberOfLoaves": number,
+          "weightPerLoaf": number,
+          "ingredients": [
+            { "name": "string", "weight": number }
+          ]
+        }
+
+        ${NORMALIZATION_INSTRUCTIONS}
+        Return ONLY valid JSON.
+        `;
+
+        const response: GenerateContentResponse = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: prompt,
+            config: { responseMimeType: 'application/json' }
+        });
+        
+        return response.text || "{}";
+    } catch (error) {
+        console.error("Error parsing text:", error);
+        throw new Error("Failed to parse input data.");
+    }
+};
+
+// Updated model to gemini-3-flash-preview for search grounding
 export const getGroundedResponse = async (prompt: string): Promise<GeminiGroundedResponse> => {
     try {
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-flash-preview',
             contents: prompt,
             config: {
                 tools: [{googleSearch: {}}],
@@ -101,13 +166,14 @@ export const getGroundedResponse = async (prompt: string): Promise<GeminiGrounde
 };
 
 
+// Updated model to gemini-3-pro-preview for complex reasoning tasks
 export const getComplexResponse = async (prompt: string): Promise<string> => {
     try {
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-3-pro-preview',
             contents: prompt,
             config: {
-                thinkingConfig: { thinkingBudget: 1024 } // Reduced budget for faster response in this context
+                thinkingConfig: { thinkingBudget: 1024 } // Thinking budget for Gemini 3 series
             },
         });
         return response.text || "No response generated.";
@@ -117,6 +183,7 @@ export const getComplexResponse = async (prompt: string): Promise<string> => {
     }
 };
 
+// Updated model to gemini-3-flash-preview
 export const getRecipeSuggestions = async (recipeContext: string, goal: string): Promise<string> => {
     try {
         const prompt = `
@@ -133,7 +200,7 @@ export const getRecipeSuggestions = async (recipeContext: string, goal: string):
         `;
         
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash', // Fast response
+            model: 'gemini-3-flash-preview', // Fast response
             contents: prompt,
         });
         
@@ -144,6 +211,7 @@ export const getRecipeSuggestions = async (recipeContext: string, goal: string):
     }
 };
 
+// Updated model to gemini-3-flash-preview for search grounding tasks
 export const suggestIngredientCost = async (ingredientName: string): Promise<number | null> => {
     try {
         const prompt = `
@@ -158,7 +226,7 @@ export const suggestIngredientCost = async (ingredientName: string): Promise<num
         `;
 
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-flash-preview',
             contents: prompt,
             config: {
                 tools: [{googleSearch: {}}],
